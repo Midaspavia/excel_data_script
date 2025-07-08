@@ -1,5 +1,6 @@
 import os
 import pandas as pd
+from excel_kennzahlen import fetch_excel_kennzahlen_by_ric
 
 DATA_DIR = "data/excel_data"
 
@@ -83,8 +84,17 @@ def process_companies():
         # Zeige Übersicht
         print(f"\n📋 ERGEBNIS-ÜBERSICHT:")
         for i, result in enumerate(results, 1):
-            isin = result.get('ISIN', 'N/A')
-            print(f"{i}. {result['Name']} ({result['RIC']}) - ISIN: {isin}")
+            print(f"\n{i}. {result['Name']} ({result['RIC']})")
+            print(f"   Sub-Industry: {result.get('Sub-Industry', 'N/A')}")
+            print(f"   Focus: {result.get('Focus', 'N/A')}")
+
+            # Zeige alle Kennzahlen aus Excel
+            for field in excel_fields:
+                value = result.get(field, 'N/A')
+                if value != 'N/A' and pd.notna(value):
+                    print(f"   {field}: {value}")
+                else:
+                    print(f"   {field}: ❌ Nicht gefunden")
 
     return results
 
@@ -264,77 +274,5 @@ def find_companies_by_sub_industry(sub_industry):
 
 
 def get_kennzahlen_for_company(ric, fields):
-    """Sammle alle gewünschten Kennzahlen für ein Unternehmen basierend auf RIC"""
-    kennzahlen = {}
-
-    for file in os.listdir(DATA_DIR):
-        if not file.endswith(".xlsx") or file.startswith("~$"):
-            continue
-
-        path = os.path.join(DATA_DIR, file)
-
-        try:
-            xls = pd.ExcelFile(path)
-            for sheet_name in xls.sheet_names:
-                # Suche RIC in verschiedenen Header-Positionen
-                for header_row in [0, 1, 2]:
-                    try:
-                        df_raw = pd.read_excel(path, sheet_name=sheet_name, header=None)
-                        df = pd.read_excel(path, sheet_name=sheet_name, header=header_row)
-
-                        # Korrigiere Spaltennamen falls nötig (für ISIN etc.)
-                        if header_row > 0:
-                            new_columns = []
-                            for col_idx, orig_col in enumerate(df.columns):
-                                better_name = None
-                                for row_above in range(header_row):
-                                    if col_idx < len(df_raw.columns):
-                                        cell_value = df_raw.iloc[row_above, col_idx]
-                                        if pd.notna(cell_value) and str(cell_value).strip():
-                                            cell_str = str(cell_value).strip()
-                                            if any(kw in cell_str.upper() for kw in ["ISIN", "MARKET", "FLOAT", "CURRENCY"]):
-                                                better_name = cell_str
-                                                break
-
-                                if better_name and str(orig_col).startswith("Unnamed"):
-                                    new_columns.append(better_name)
-                                else:
-                                    new_columns.append(str(orig_col))
-                            df.columns = new_columns
-
-                        if "RIC" not in df.columns:
-                            continue
-
-                        # Finde die Zeile mit dem RIC
-                        ric_matches = df[df["RIC"].astype(str).str.upper().str.strip() == ric.upper().strip()]
-
-                        if not ric_matches.empty:
-                            row = ric_matches.iloc[0]
-
-                            # Sammle alle gewünschten Felder
-                            for field in fields:
-                                if field in kennzahlen:  # Bereits gefunden
-                                    continue
-
-                                # Direkte Suche
-                                if field in df.columns:
-                                    value = row[field]
-                                    if pd.notna(value) and str(value).strip():
-                                        kennzahlen[field] = value
-                                        continue
-
-                                # Fuzzy-Suche nach ähnlichen Spaltennamen
-                                for col in df.columns:
-                                    if field.lower() in str(col).lower() or str(col).lower() in field.lower():
-                                        value = row[col]
-                                        if pd.notna(value) and str(value).strip():
-                                            kennzahlen[field] = value
-                                            break
-
-                    except Exception:
-                        continue
-
-        except Exception:
-            continue
-
-    return kennzahlen
+    """Sammelt alle gewünschten Kennzahlen für ein Unternehmen basierend auf RIC (nutzt robusten Import aus excel_kennzahlen.py)"""
+    return fetch_excel_kennzahlen_by_ric(ric, fields)
