@@ -46,14 +46,31 @@ def process_companies():
             # KORRIGIERT: Spalte A = Name, Spalte B = RIC
             input_name = str(first_row.iloc[0] if len(first_row) > 0 else "").strip()  # Spalte A
             input_ric = str(first_row.iloc[1] if len(first_row) > 1 else "").strip()   # Spalte B
-            is_focus = str(first_row.get("Focus?", "")).strip().lower() == "ja"
+
+            # NEUE LOGIK: Prüfe Sub-Industry und Focus Spalten für Filter-Bestimmung
+            sub_industry_filter = str(first_row.get("Sub-Industry", "")).strip().upper()
+            focus_filter = str(first_row.get("Focus", "")).strip().upper()
+
+            # Bestimme Filter-Typ basierend auf X-Markierung
+            if sub_industry_filter == "X":
+                is_focus = False
+                filter_type = "Sub-Industry"
+            elif focus_filter == "X":
+                is_focus = True
+                filter_type = "Focus"
+            else:
+                # Fallback: Standard ist Sub-Industry
+                is_focus = False
+                filter_type = "Sub-Industry (Default)"
 
             # Sammle gewünschte Kennzahlen
             excel_fields = df_input["Kennzahlen aus Excel"].dropna().astype(str).str.strip().tolist()
 
             print(f"📋 Input Name (Spalte A): '{input_name}'")
             print(f"📋 Input RIC (Spalte B): '{input_ric}'")
-            print(f"📋 Focus: {is_focus}")
+            print(f"📋 Sub-Industry Filter: '{sub_industry_filter}'")
+            print(f"📋 Focus Filter: '{focus_filter}'")
+            print(f"🎯 Filter-Typ: {filter_type}")
             print(f"📋 Gewünschte Kennzahlen: {excel_fields}")
 
         except Exception as e:
