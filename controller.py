@@ -100,176 +100,187 @@ def process_companies():
 
 
 def find_company_by_ric(ric):
-    """Finde Unternehmen anhand des RIC - ROBUSTE VERSION"""
-    print(f"🔍 ROBUSTE RIC-Suche: '{ric}'")
+    """Finde Unternehmen anhand des RIC - direkte Index-Positionen"""
+    print(f"🔍 RIC-Suche: '{ric}' (RIC=Spalte E, Focus=Spalte D, Sub-Industry=Spalte C)")
 
-    # Teste nur die wichtigsten Excel-Dateien zuerst
-    priority_files = [
-        "Consumer_Equity_Keyfigures.xlsx",
-        "Consumer_Financial_Stability.xlsx",
-        "Consumer_Growth_Rates.xlsx",
-        "Consumer_Revenue_Profitability_CF.xlsx",
-        "Consumer_Working_Capital.xlsx"
-    ]
-
-    for file in priority_files:
-        file_path = os.path.join(DATA_DIR, file)
-        if not os.path.exists(file_path):
+    for file in os.listdir(DATA_DIR):
+        if not file.endswith(".xlsx") or file.startswith("~$"):
             continue
 
-        print(f"📁 Teste prioritäre Datei: {file}")
+        file_path = os.path.join(DATA_DIR, file)
 
         try:
             xls = pd.ExcelFile(file_path)
             for sheet_name in xls.sheet_names:
-                print(f"  📄 Teste Sheet: {sheet_name}")
+                # Nur relevante Sheets
+                if not any(pattern in sheet_name.lower() for pattern in ["equity", "key", "revenue", "profitability", "financial", "growth", "figures"]):
+                    continue
 
-                # Teste verschiedene Header-Positionen
-                for header_row in [0, 1, 2]:
-                    try:
-                        df = pd.read_excel(file_path, sheet_name=sheet_name, header=header_row, nrows=200)
+                try:
+                    # Lese mit Header=2 (Zeile 3)
+                    df = pd.read_excel(file_path, sheet_name=sheet_name, header=2, nrows=200)
 
-                        if "RIC" not in df.columns:
-                            continue
-
-                        # Suche nach dem spezifischen RIC
-                        matches = df[df["RIC"].astype(str).str.upper().str.strip() == ric.upper().strip()]
-
-                        if not matches.empty:
-                            row = matches.iloc[0]
-
-                            # Finde Name-Spalte
-                            name_col = None
-                            for col in df.columns:
-                                col_upper = str(col).upper().strip()
-                                if col_upper in ["UNIVERSE", "HOLDING"]:
-                                    name_col = col
-                                    break
-
-                            company = {
-                                "Name": str(row[name_col]).strip() if name_col else f"Company_{ric}",
-                                "RIC": str(row["RIC"]).strip(),
-                                "Sub-Industry": str(row.get("Sub-Industry", "")).strip(),
-                                "Focus": str(row.get("Focus", "")).strip()
-                            }
-                            print(f"✅ GEFUNDEN in {file}, Sheet {sheet_name}: {company['Name']} ({company['RIC']})")
-                            return company
-
-                    except Exception as e:
-                        print(f"    ❌ Header {header_row+1}: {str(e)[:50]}")
+                    # Prüfe ob genügend Spalten vorhanden sind
+                    if len(df.columns) < 5:
                         continue
 
+                    # RIC ist in Spalte E (Index 4)
+                    ric_col = df.columns[4]
+
+                    # Suche nach dem spezifischen RIC
+                    matches = df[df[ric_col].astype(str).str.upper().str.strip() == ric.upper().strip()]
+
+                    if not matches.empty:
+                        row = matches.iloc[0]
+
+                        # Direkte Index-Zugriffe
+                        sub_industry = str(row.iloc[2]).strip()  # Spalte C
+                        focus_value = str(row.iloc[3]).strip()   # Spalte D
+                        ric_value = str(row.iloc[4]).strip()     # Spalte E
+
+                        # Finde Name-Spalte (Universe oder Holding)
+                        name_value = "Unknown"
+                        if len(df.columns) > 1:
+                            name_value = str(row.iloc[1]).strip()  # Spalte B (Universe)
+
+                        company = {
+                            "Name": name_value,
+                            "RIC": ric_value,
+                            "Sub-Industry": sub_industry,
+                            "Focus": focus_value
+                        }
+                        print(f"✅ GEFUNDEN: {company['Name']} ({company['RIC']})")
+                        print(f"   Sub-Industry (Spalte C): '{company['Sub-Industry']}'")
+                        print(f"   Focus (Spalte D): '{company['Focus']}'")
+                        return company
+
+                except Exception as e:
+                    continue
+
         except Exception as e:
-            print(f"  ❌ Datei-Fehler: {str(e)[:50]}")
             continue
 
-    print(f"❌ RIC '{ric}' nicht in prioritären Dateien gefunden")
+    print(f"❌ RIC '{ric}' nicht gefunden")
     return None
 
 
 def find_companies_by_focus(focus):
-    """Finde alle Unternehmen der gleichen Focus-Gruppe"""
+    """Suche alle Unternehmen mit gleichem Focus (Spalte D)"""
     companies = []
+    print(f"🔍 Focus-Suche in Spalte D: '{focus}'")
 
     for file in os.listdir(DATA_DIR):
         if not file.endswith(".xlsx") or file.startswith("~$"):
             continue
 
-        path = os.path.join(DATA_DIR, file)
+        file_path = os.path.join(DATA_DIR, file)
+        print(f"📁 Durchsuche: {file}")
 
         try:
-            xls = pd.ExcelFile(path)
+            xls = pd.ExcelFile(file_path)
+
             for sheet_name in xls.sheet_names:
-                for header_row in [0, 1, 2]:
-                    try:
-                        df = pd.read_excel(path, sheet_name=sheet_name, header=header_row)
+                # Nur relevante Sheets
+                if not any(pattern in sheet_name.lower() for pattern in ["equity", "key", "revenue", "profitability", "financial", "growth", "figures"]):
+                    continue
 
-                        # Prüfe ob alle nötigen Spalten vorhanden sind
-                        required_cols = ["RIC", "Focus"]
-                        name_col = None
-                        for col in df.columns:
-                            if str(col).upper().strip() in ["UNIVERSE", "HOLDING"]:
-                                name_col = col
-                                break
+                try:
+                    # Lese mit Header=2 (Zeile 3)
+                    df = pd.read_excel(file_path, sheet_name=sheet_name, header=2)
 
-                        if not all(col in df.columns for col in required_cols) or not name_col:
-                            continue
+                    # Prüfe ob genügend Spalten vorhanden sind
+                    if len(df.columns) < 5:
+                        continue
 
-                        # Finde alle mit gleichem Focus
-                        matches = df[df["Focus"].astype(str).str.strip().str.lower() == focus.lower().strip()]
+                    # Suche in Spalte D (Index 3) nach gleichem Focus
+                    found_in_sheet = 0
+                    for _, row in df.iterrows():
+                        if len(row) >= 5 and pd.notna(row.iloc[1]) and pd.notna(row.iloc[3]) and pd.notna(row.iloc[4]):
+                            row_focus = str(row.iloc[3]).strip()  # Spalte D
 
-                        for _, row in matches.iterrows():
-                            if pd.notna(row[name_col]) and pd.notna(row["RIC"]):
+                            if row_focus == focus.strip():
                                 company = {
-                                    "Name": str(row[name_col]).strip(),
-                                    "RIC": str(row["RIC"]).strip(),
-                                    "Sub-Industry": str(row.get("Sub-Industry", "")).strip(),
-                                    "Focus": str(row["Focus"]).strip()
+                                    "Name": str(row.iloc[1]).strip(),       # Spalte B
+                                    "RIC": str(row.iloc[4]).strip(),        # Spalte E
+                                    "Sub-Industry": str(row.iloc[2]).strip(), # Spalte C
+                                    "Focus": row_focus                       # Spalte D
                                 }
 
                                 # Vermeide Duplikate
                                 if not any(c["RIC"] == company["RIC"] for c in companies):
                                     companies.append(company)
+                                    found_in_sheet += 1
 
-                    except Exception:
-                        continue
+                    if found_in_sheet > 0:
+                        print(f"  📄 {sheet_name}: {found_in_sheet} Unternehmen gefunden")
 
-        except Exception:
+                except Exception as e:
+                    continue
+
+        except Exception as e:
             continue
 
+    print(f"📊 GESAMT: {len(companies)} Unternehmen mit Focus '{focus}' gefunden")
     return companies
 
 
 def find_companies_by_sub_industry(sub_industry):
-    """Finde alle Unternehmen der gleichen Sub-Industry"""
+    """Suche alle Unternehmen mit gleicher Sub-Industry (Spalte C)"""
     companies = []
+    print(f"🔍 Sub-Industry-Suche in Spalte C: '{sub_industry}'")
 
     for file in os.listdir(DATA_DIR):
         if not file.endswith(".xlsx") or file.startswith("~$"):
             continue
 
-        path = os.path.join(DATA_DIR, file)
+        file_path = os.path.join(DATA_DIR, file)
+        print(f"📁 Durchsuche: {file}")
 
         try:
-            xls = pd.ExcelFile(path)
+            xls = pd.ExcelFile(file_path)
+
             for sheet_name in xls.sheet_names:
-                for header_row in [0, 1, 2]:
-                    try:
-                        df = pd.read_excel(path, sheet_name=sheet_name, header=header_row)
+                # Nur relevante Sheets
+                if not any(pattern in sheet_name.lower() for pattern in ["equity", "key", "revenue", "profitability", "financial", "growth", "figures"]):
+                    continue
 
-                        # Prüfe ob alle nötigen Spalten vorhanden sind
-                        required_cols = ["RIC", "Sub-Industry"]
-                        name_col = None
-                        for col in df.columns:
-                            if str(col).upper().strip() in ["UNIVERSE", "HOLDING"]:
-                                name_col = col
-                                break
+                try:
+                    # Lese mit Header=2 (Zeile 3)
+                    df = pd.read_excel(file_path, sheet_name=sheet_name, header=2)
 
-                        if not all(col in df.columns for col in required_cols) or not name_col:
-                            continue
+                    # Prüfe ob genügend Spalten vorhanden sind
+                    if len(df.columns) < 5:
+                        continue
 
-                        # Finde alle mit gleicher Sub-Industry
-                        matches = df[df["Sub-Industry"].astype(str).str.strip().str.lower() == sub_industry.lower().strip()]
+                    # Suche in Spalte C (Index 2) nach gleicher Sub-Industry
+                    found_in_sheet = 0
+                    for _, row in df.iterrows():
+                        if len(row) >= 5 and pd.notna(row.iloc[1]) and pd.notna(row.iloc[2]) and pd.notna(row.iloc[4]):
+                            row_sub_industry = str(row.iloc[2]).strip()  # Spalte C
 
-                        for _, row in matches.iterrows():
-                            if pd.notna(row[name_col]) and pd.notna(row["RIC"]):
+                            if row_sub_industry == sub_industry.strip():
                                 company = {
-                                    "Name": str(row[name_col]).strip(),
-                                    "RIC": str(row["RIC"]).strip(),
-                                    "Sub-Industry": str(row["Sub-Industry"]).strip(),
-                                    "Focus": str(row.get("Focus", "")).strip()
+                                    "Name": str(row.iloc[1]).strip(),       # Spalte B
+                                    "RIC": str(row.iloc[4]).strip(),        # Spalte E
+                                    "Sub-Industry": row_sub_industry,        # Spalte C
+                                    "Focus": str(row.iloc[3]).strip()       # Spalte D
                                 }
 
                                 # Vermeide Duplikate
                                 if not any(c["RIC"] == company["RIC"] for c in companies):
                                     companies.append(company)
+                                    found_in_sheet += 1
 
-                    except Exception:
-                        continue
+                    if found_in_sheet > 0:
+                        print(f"  📄 {sheet_name}: {found_in_sheet} Unternehmen gefunden")
 
-        except Exception:
+                except Exception as e:
+                    continue
+
+        except Exception as e:
             continue
 
+    print(f"📊 GESAMT: {len(companies)} Unternehmen mit Sub-Industry '{sub_industry}' gefunden")
     return companies
 
 
