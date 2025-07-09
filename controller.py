@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 from excel_kennzahlen import fetch_excel_kennzahlen_by_ric
+from refinitiv_integration import get_refinitiv_kennzahlen_for_companies
 import glob
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -34,8 +35,8 @@ def cleanup_temp_files():
         print("✅ Keine temporären Dateien gefunden")
 
 def process_companies():
-    """Hauptfunktion: Liest input_user.xlsx und erstellt output.xlsx mit Daten aus Excel-Dateien - UNTERSTÜTZT RIC UND NAMEN"""
-    print("🚀 STARTE VERARBEITUNG (RIC oder NAME)...")
+    """Hauptfunktion: Liest input_user.xlsx und erstellt output.xlsx mit Daten aus Excel-Dateien UND Refinitiv-Kennzahlen"""
+    print("🚀 STARTE VERARBEITUNG (RIC oder NAME + Excel + Refinitiv)...")
 
     try:
         # 1. Lese input_user.xlsx
@@ -65,13 +66,15 @@ def process_companies():
 
             # Sammle gewünschte Kennzahlen
             excel_fields = df_input["Kennzahlen aus Excel"].dropna().astype(str).str.strip().tolist()
+            refinitiv_fields = df_input["Kennzahlen aus Refinitiv"].dropna().astype(str).str.strip().tolist()
 
             print(f"📋 Input Name (Spalte A): '{input_name}'")
             print(f"📋 Input RIC (Spalte B): '{input_ric}'")
             print(f"📋 Sub-Industry Filter: '{sub_industry_filter}'")
             print(f"📋 Focus Filter: '{focus_filter}'")
             print(f"🎯 Filter-Typ: {filter_type}")
-            print(f"📋 Gewünschte Kennzahlen: {excel_fields}")
+            print(f"📋 Gewünschte Excel-Kennzahlen: {excel_fields}")
+            print(f"📊 Gewünschte Refinitiv-Kennzahlen: {refinitiv_fields}")
 
         except Exception as e:
             print(f"❌ Fehler beim Lesen von input_user.xlsx: {e}")
@@ -111,13 +114,22 @@ def process_companies():
 
         print(f"📊 {len(peer_companies)} Unternehmen der gleichen Gruppe gefunden")
 
-        # 4. Sammle Kennzahlen für alle Unternehmen
+        # 4. Hole Refinitiv-Kennzahlen für alle Unternehmen (falls vorhanden)
+        refinitiv_data = {}
+        if refinitiv_fields:
+            print(f"\n🔄 Hole Refinitiv-Kennzahlen für {len(peer_companies)} Unternehmen...")
+            refinitiv_data = get_refinitiv_kennzahlen_for_companies(peer_companies, refinitiv_fields)
+
+        # 5. Sammle Kennzahlen für alle Unternehmen
         results = []
         for i, company in enumerate(peer_companies, 1):
             print(f"\n🏢 Verarbeite {i}/{len(peer_companies)}: {company['Name']} ({company['RIC']})")
 
             # Sammle Excel-Kennzahlen
-            kennzahlen = get_kennzahlen_for_company(company['RIC'], excel_fields)
+            excel_kennzahlen = get_kennzahlen_for_company(company['RIC'], excel_fields)
+
+            # Sammle Refinitiv-Kennzahlen
+            refinitiv_kennzahlen = refinitiv_data.get(company['RIC'], {})
 
             # Erstelle Ergebnis
             result = {
@@ -126,18 +138,20 @@ def process_companies():
                 "Sub-Industry": company.get('Sub-Industry', ''),
                 "Focus": company.get('Focus', '')
             }
-            result.update(kennzahlen)
+            result.update(excel_kennzahlen)
+            result.update(refinitiv_kennzahlen)
             results.append(result)
 
-            print(f"✅ {len(kennzahlen)} Kennzahlen gesammelt")
+            print(f"✅ {len(excel_kennzahlen)} Excel-Kennzahlen + {len(refinitiv_kennzahlen)} Refinitiv-Kennzahlen gesammelt")
 
-        # 5. Speichere Output mit schönem Design
+        # 6. Speichere Output mit schönem Design
         if results:
             output_path = "excel_data/output.xlsx"
             df_output = pd.DataFrame(results)
 
             # Erstelle schön formatierte Excel-Datei
-            create_beautiful_excel_output(df_output, output_path, excel_fields)
+            all_fields = excel_fields + list(refinitiv_data.keys() if refinitiv_data else [])
+            create_beautiful_excel_output(df_output, output_path, all_fields)
 
             print(f"\n✅ SCHÖN FORMATIERTES OUTPUT GESPEICHERT: {output_path}")
             print(f"📊 {len(results)} Unternehmen mit {len(df_output.columns)} Spalten")
@@ -149,13 +163,21 @@ def process_companies():
                 print(f"   Sub-Industry: {result.get('Sub-Industry', 'N/A')}")
                 print(f"   Focus: {result.get('Focus', 'N/A')}")
 
-                # Zeige alle Kennzahlen aus Excel
+                # Zeige alle Excel-Kennzahlen
                 for field in excel_fields:
                     value = result.get(field, 'N/A')
                     if value != 'N/A' and pd.notna(value):
-                        print(f"   {field}: {value}")
+                        print(f"   [Excel] {field}: {value}")
                     else:
-                        print(f"   {field}: ❌ Nicht gefunden")
+                        print(f"   [Excel] {field}: ❌ Nicht gefunden")
+
+                # Zeige alle Refinitiv-Kennzahlen
+                for field in refinitiv_kennzahlen.keys():
+                    value = result.get(field, 'N/A')
+                    if value != 'N/A' and pd.notna(value):
+                        print(f"   [Refinitiv] {field}: {value}")
+                    else:
+                        print(f"   [Refinitiv] {field}: ❌ Nicht gefunden")
 
         return results
 
