@@ -1,7 +1,7 @@
 import pandas as pd
 import os
 
-DATA_DIR = "data/excel_data"
+DATA_DIR = "excel_data/data"
 
 def fetch_excel_kennzahlen_by_ric(ric: str, fields: list) -> dict:
     """Neue Funktion: Suche Kennzahlen direkt über RIC"""

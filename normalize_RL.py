@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import refinitiv.data as rd
 
-DATA_DIR = "data/excel_data"
+DATA_DIR = "excel_data/data"
 
 def replace_rl_with_rln():
     print("🔧 Suche nach 'RL' und ersetze mit 'RL.N' in allen Dateien...")
