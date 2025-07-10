@@ -36,130 +36,161 @@ def cleanup_temp_files():
 
 def process_companies():
     """Hauptfunktion: Liest input_user.xlsx und erstellt output.xlsx mit Daten aus Excel-Dateien UND Refinitiv-Kennzahlen"""
-    print("🚀 STARTE VERARBEITUNG (RIC oder NAME + Excel + Refinitiv)...")
+    print("🚀 STARTE VERARBEITUNG (MEHRERE RICs/Namen + Excel + Refinitiv)...")
 
     try:
         # 1. Lese input_user.xlsx
         try:
             df_input = pd.read_excel("excel_data/input_user.xlsx")
+
+            # Kennzahlen aus der ersten Zeile für alle verwenden
             first_row = df_input.iloc[0]
+            excel_fields = df_input["Kennzahlen aus Excel"].dropna().astype(str).str.strip().tolist()
+            refinitiv_fields = df_input["Kennzahlen aus Refinitiv"].dropna().astype(str).str.strip().tolist()
 
-            # KORRIGIERT: Spalte A = Name, Spalte B = RIC
-            input_name = str(first_row.iloc[0] if len(first_row) > 0 else "").strip()  # Spalte A
-            input_ric = str(first_row.iloc[1] if len(first_row) > 1 else "").strip()   # Spalte B
-
-            # NEUE LOGIK: Prüfe Sub-Industry und Focus Spalten für Filter-Bestimmung
+            # Filter-Einstellungen aus der ersten Zeile
             sub_industry_filter = str(first_row.get("Sub-Industry", "")).strip().upper()
             focus_filter = str(first_row.get("Focus", "")).strip().upper()
 
             # Bestimme Filter-Typ basierend auf X-Markierung
-            if sub_industry_filter == "X":
-                is_focus = False
-                filter_type = "Sub-Industry"
-            elif focus_filter == "X":
+            # KORRIGIERT: Focus hat Priorität vor Sub-Industry
+            if focus_filter == "X":
                 is_focus = True
                 filter_type = "Focus"
+            elif sub_industry_filter == "X":
+                is_focus = False
+                filter_type = "Sub-Industry"
             else:
                 # Fallback: Standard ist Sub-Industry
                 is_focus = False
                 filter_type = "Sub-Industry (Default)"
 
-            # Sammle gewünschte Kennzahlen
-            excel_fields = df_input["Kennzahlen aus Excel"].dropna().astype(str).str.strip().tolist()
-            refinitiv_fields = df_input["Kennzahlen aus Refinitiv"].dropna().astype(str).str.strip().tolist()
-
-            print(f"📋 Input Name (Spalte A): '{input_name}'")
-            print(f"📋 Input RIC (Spalte B): '{input_ric}'")
-            print(f"📋 Sub-Industry Filter: '{sub_industry_filter}'")
-            print(f"📋 Focus Filter: '{focus_filter}'")
             print(f"🎯 Filter-Typ: {filter_type}")
             print(f"📋 Gewünschte Excel-Kennzahlen: {excel_fields}")
             print(f"📊 Gewünschte Refinitiv-Kennzahlen: {refinitiv_fields}")
+
+            # 2. Sammle alle Input-Unternehmen aus allen Zeilen
+            input_companies = []
+            for index, row in df_input.iterrows():
+                input_name = str(row.iloc[0] if len(row) > 0 else "").strip()  # Spalte A
+                input_ric = str(row.iloc[1] if len(row) > 1 else "").strip()   # Spalte B
+
+                # Überspringe leere Zeilen
+                if not input_name and not input_ric:
+                    continue
+                if input_name.lower() in ["", "nan", "none"] and input_ric.lower() in ["", "nan", "none"]:
+                    continue
+
+                input_companies.append({
+                    'name': input_name if input_name.lower() not in ["", "nan", "none"] else None,
+                    'ric': input_ric if input_ric.lower() not in ["", "nan", "none"] else None,
+                    'row_number': index + 1
+                })
+
+            print(f"📋 {len(input_companies)} Input-Unternehmen gefunden")
 
         except Exception as e:
             print(f"❌ Fehler beim Lesen von input_user.xlsx: {e}")
             return []
 
-        # 2. Bestimme Suchstrategie: RIC hat Priorität, dann Name
-        if input_ric and input_ric.lower() not in ["", "nan", "none"]:
-            # RIC vorhanden - nutze RIC-Suche
-            print(f"🔍 PRIORITÄT: RIC-Suche für '{input_ric}'")
-            start_company = find_company_by_ric(input_ric)
-        elif input_name and input_name.lower() not in ["", "nan", "none"]:
-            # Kein RIC, aber Name vorhanden - nutze Name-Suche
-            if len(input_name) < 4:
-                print("❌ Name-Suche erfordert mindestens 4 Zeichen!")
-                return []
-            print(f"🔍 FALLBACK: Name-Suche für '{input_name}' (Teilwort-Suche)")
-            start_company = find_company_by_name(input_name)
-        else:
-            print("❌ Weder RIC noch Name im Input gefunden!")
-            return []
+        # 3. Verarbeite jedes Input-Unternehmen
+        all_results = []
+        processed_groups = set()  # Verhindere Duplikate bei gleichen Gruppen
 
-        if not start_company:
-            print("❌ Start-Unternehmen nicht gefunden!")
-            return []
+        for i, input_company in enumerate(input_companies, 1):
+            print(f"\n🔍 VERARBEITE {i}/{len(input_companies)}: Zeile {input_company['row_number']}")
 
-        print(f"✅ Start-Unternehmen gefunden: {start_company['Name']} ({start_company['RIC']})")
-        print(f"   Sub-Industry: {start_company.get('Sub-Industry', 'N/A')}")
-        print(f"   Focus: {start_company.get('Focus', 'N/A')}")
+            # Bestimme Suchstrategie: RIC hat Priorität, dann Name
+            if input_company['ric']:
+                print(f"   🎯 RIC-Suche für '{input_company['ric']}'")
+                start_company = find_company_by_ric(input_company['ric'])
+            elif input_company['name']:
+                if len(input_company['name']) < 4:
+                    print(f"   ❌ Name '{input_company['name']}' zu kurz (min. 4 Zeichen)")
+                    continue
+                print(f"   🎯 Name-Suche für '{input_company['name']}'")
+                start_company = find_company_by_name(input_company['name'])
+            else:
+                print("   ❌ Weder RIC noch Name vorhanden")
+                continue
 
-        # 3. Finde alle Unternehmen der gleichen Gruppe
-        if is_focus and start_company.get('Focus'):
-            print(f"🎯 Focus-Modus: Suche nach Focus-Gruppe '{start_company['Focus']}'")
-            peer_companies = find_companies_by_focus(start_company['Focus'])
-        else:
-            print(f"🎯 Sub-Industry-Modus: Suche nach Sub-Industry '{start_company.get('Sub-Industry')}'")
-            peer_companies = find_companies_by_sub_industry(start_company.get('Sub-Industry'))
+            if not start_company:
+                print(f"   ❌ Unternehmen nicht gefunden!")
+                continue
 
-        print(f"📊 {len(peer_companies)} Unternehmen der gleichen Gruppe gefunden")
+            print(f"   ✅ Gefunden: {start_company['Name']} ({start_company['RIC']})")
 
-        # 4. Hole Refinitiv-Kennzahlen für alle Unternehmen (falls vorhanden)
-        refinitiv_data = {}
-        if refinitiv_fields:
-            print(f"\n🔄 Hole Refinitiv-Kennzahlen für {len(peer_companies)} Unternehmen...")
-            refinitiv_data = get_refinitiv_kennzahlen_for_companies(peer_companies, refinitiv_fields)
+            # Bestimme Gruppe für Filterung
+            if is_focus and start_company.get('Focus'):
+                group_key = f"focus_{start_company['Focus']}"
+                if group_key in processed_groups:
+                    print(f"   ⏭️  Focus-Gruppe '{start_company['Focus']}' bereits verarbeitet")
+                    continue
+                processed_groups.add(group_key)
+                print(f"   🎯 Focus-Modus: Suche nach Focus-Gruppe '{start_company['Focus']}'")
+                peer_companies = find_companies_by_focus(start_company['Focus'])
+            else:
+                group_key = f"subindustry_{start_company.get('Sub-Industry')}"
+                if group_key in processed_groups:
+                    print(f"   ⏭️  Sub-Industry '{start_company.get('Sub-Industry')}' bereits verarbeitet")
+                    continue
+                processed_groups.add(group_key)
+                print(f"   🎯 Sub-Industry-Modus: Suche nach Sub-Industry '{start_company.get('Sub-Industry')}'")
+                peer_companies = find_companies_by_sub_industry(start_company.get('Sub-Industry'))
 
-        # 5. Sammle Kennzahlen für alle Unternehmen
-        results = []
-        for i, company in enumerate(peer_companies, 1):
-            print(f"\n🏢 Verarbeite {i}/{len(peer_companies)}: {company['Name']} ({company['RIC']})")
+            print(f"   📊 {len(peer_companies)} Unternehmen der Gruppe gefunden")
 
-            # Sammle Excel-Kennzahlen
-            excel_kennzahlen = get_kennzahlen_for_company(company['RIC'], excel_fields)
+            # 4. Hole Refinitiv-Kennzahlen für diese Gruppe (falls vorhanden)
+            refinitiv_data = {}
+            if refinitiv_fields:
+                print(f"   🔄 Hole Refinitiv-Kennzahlen für {len(peer_companies)} Unternehmen...")
+                refinitiv_data = get_refinitiv_kennzahlen_for_companies(peer_companies, refinitiv_fields)
 
-            # Sammle Refinitiv-Kennzahlen
-            refinitiv_kennzahlen = refinitiv_data.get(company['RIC'], {})
+            # 5. Sammle Kennzahlen für alle Unternehmen der Gruppe
+            for j, company in enumerate(peer_companies, 1):
+                print(f"     🏢 {j}/{len(peer_companies)}: {company['Name']} ({company['RIC']})")
 
-            # Erstelle Ergebnis
-            result = {
-                "Name": company['Name'],
-                "RIC": company['RIC'],
-                "Sub-Industry": company.get('Sub-Industry', ''),
-                "Focus": company.get('Focus', '')
-            }
-            result.update(excel_kennzahlen)
-            result.update(refinitiv_kennzahlen)
-            results.append(result)
+                # Sammle Excel-Kennzahlen
+                excel_kennzahlen = get_kennzahlen_for_company(company['RIC'], excel_fields)
 
-            print(f"✅ {len(excel_kennzahlen)} Excel-Kennzahlen + {len(refinitiv_kennzahlen)} Refinitiv-Kennzahlen gesammelt")
+                # Sammle Refinitiv-Kennzahlen
+                refinitiv_kennzahlen = refinitiv_data.get(company['RIC'], {})
+
+                # Erstelle Ergebnis
+                result = {
+                    "Name": company['Name'],
+                    "RIC": company['RIC'],
+                    "Sub-Industry": company.get('Sub-Industry', ''),
+                    "Focus": company.get('Focus', ''),
+                    "Input_Source": f"Zeile {input_company['row_number']}"  # Markiere Herkunft
+                }
+                result.update(excel_kennzahlen)
+                result.update(refinitiv_kennzahlen)
+                all_results.append(result)
+
+                print(f"       ✅ {len(excel_kennzahlen)} Excel + {len(refinitiv_kennzahlen)} Refinitiv Kennzahlen")
 
         # 6. Speichere Output mit schönem Design
-        if results:
+        if all_results:
             output_path = "excel_data/output.xlsx"
-            df_output = pd.DataFrame(results)
+            df_output = pd.DataFrame(all_results)
+
+            print(f"\n📊 INSGESAMT {len(all_results)} UNTERNEHMEN VERARBEITET")
+            print("💾 Speichere in output.xlsx...")
 
             # Erstelle schön formatierte Excel-Datei
-            all_fields = excel_fields + list(refinitiv_data.keys() if refinitiv_data else [])
-            create_beautiful_excel_output(df_output, output_path, all_fields)
+            all_refinitiv_fields = []
+            if refinitiv_fields:
+                all_refinitiv_fields = refinitiv_fields
+            create_beautiful_excel_output(df_output, output_path, excel_fields)
 
             print(f"\n✅ SCHÖN FORMATIERTES OUTPUT GESPEICHERT: {output_path}")
-            print(f"📊 {len(results)} Unternehmen mit {len(df_output.columns)} Spalten")
+            print(f"📊 {len(all_results)} Unternehmen mit {len(df_output.columns)} Spalten")
 
             # Zeige Übersicht
             print(f"\n📋 ERGEBNIS-ÜBERSICHT:")
-            for i, result in enumerate(results, 1):
-                print(f"\n{i}. {result['Name']} ({result['RIC']})")
+            for i, result in enumerate(all_results, 1):
+                print(f"\n{i}. {result['Name']} ({result['RIC']}) - {result.get('Input_Source', '')}")
                 print(f"   Sub-Industry: {result.get('Sub-Industry', 'N/A')}")
                 print(f"   Focus: {result.get('Focus', 'N/A')}")
 
@@ -172,14 +203,14 @@ def process_companies():
                         print(f"   [Excel] {field}: ❌ Nicht gefunden")
 
                 # Zeige alle Refinitiv-Kennzahlen
-                for field in refinitiv_kennzahlen.keys():
+                for field in all_refinitiv_fields:
                     value = result.get(field, 'N/A')
                     if value != 'N/A' and pd.notna(value):
                         print(f"   [Refinitiv] {field}: {value}")
                     else:
                         print(f"   [Refinitiv] {field}: ❌ Nicht gefunden")
 
-        return results
+        return all_results
 
     finally:
         # Bereinige temporäre Dateien nach der Ausführung (wird IMMER ausgeführt)
@@ -378,6 +409,11 @@ def get_kennzahlen_for_company(ric, fields):
 def find_company_by_name(name):
     """Finde Unternehmen anhand des Namens - Suche in Holding/Universe"""
     print(f"🔍 Name-Suche: '{name}' (Teilwort-Suche in Holding/Universe)")
+
+    # Prüfe 4-Zeichen-Regel
+    if len(name) < 4:
+        print(f"❌ Name '{name}' zu kurz (mindestens 4 Zeichen erforderlich)")
+        return None
 
     for file in os.listdir(DATA_DIR):
         if not file.endswith(".xlsx") or file.startswith("~$"):
