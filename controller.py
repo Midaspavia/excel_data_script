@@ -194,14 +194,18 @@ def process_companies():
                 print(f"📁 Erstelle fehlendes Verzeichnis: {output_dir}")
                 os.makedirs(output_dir, exist_ok=True)
 
+            # 🔢 BERECHNE DURCHSCHNITTE FÜR EXCEL-KENNZAHLEN
+            print("\n🔢 BERECHNE DURCHSCHNITTE FÜR EXCEL-KENNZAHLEN...")
+            df_output_with_averages = calculate_excel_averages(df_output, excel_fields)
+
             # Erstelle schön formatierte Excel-Datei
             all_refinitiv_fields = []
             if refinitiv_fields:
                 all_refinitiv_fields = refinitiv_fields
-            create_beautiful_excel_output(df_output, output_path, excel_fields)
+            create_beautiful_excel_output(df_output_with_averages, output_path, excel_fields)
 
             print(f"\n✅ SCHÖN FORMATIERTES OUTPUT GESPEICHERT: {output_path}")
-            print(f"📊 {len(all_results)} Unternehmen mit {len(df_output.columns)} Spalten")
+            print(f"📊 {len(df_output_with_averages)} Zeilen insgesamt (inkl. Durchschnitte) mit {len(df_output_with_averages.columns)} Spalten")
 
             # Zeige Übersicht
             print(f"\n📋 ERGEBNIS-ÜBERSICHT:")
@@ -713,3 +717,119 @@ def create_beautiful_excel_output(df, output_path, excel_fields):
     print(f"  📊 {len(df)} Unternehmen formatiert")
     print(f"  📈 {len(metric_cols)} Kennzahlen mit Conditional Formatting")
     print(f"  💾 Datei gespeichert: {output_path}")
+
+def calculate_excel_averages(df, excel_fields):
+    """Berechnet die Durchschnitte für Excel-Kennzahlen nach Sub-Industry und Focus-Gruppen"""
+    print("🔢 BERECHNE DURCHSCHNITTE FÜR EXCEL-KENNZAHLEN...")
+
+    # Filtere nur die Spalten, die mit Excel-Kennzahlen gefüllt sind
+    excel_columns = [field for field in excel_fields if field in df.columns]
+
+    if not excel_columns:
+        print("⚠️ Keine Excel-Kennzahlen gefunden, überspringe Durchschnittsberechnung")
+        return df
+
+    print(f"📊 Berechne Durchschnitte für: {excel_columns}")
+
+    # Konvertiere Excel-Kennzahlen zu numerischen Werten
+    df_numeric = df.copy()
+    for col in excel_columns:
+        df_numeric[col] = pd.to_numeric(df_numeric[col], errors='coerce')
+
+    # 1. SUB-INDUSTRY DURCHSCHNITTE (ALLE UNTERNEHMEN AUS DEN EXCEL-DATEIEN)
+    print("   🏭 Berechne Sub-Industry Durchschnitte (alle verfügbaren Unternehmen)...")
+
+    # Hole alle eindeutigen Sub-Industries aus dem Output
+    unique_sub_industries = df_numeric['Sub-Industry'].dropna().unique()
+
+    for sub_industry in unique_sub_industries:
+        if sub_industry and sub_industry.strip():
+            print(f"     🔍 Suche alle Unternehmen der Sub-Industry: '{sub_industry}'")
+
+            # Hole ALLE Unternehmen dieser Sub-Industry aus den Excel-Dateien
+            all_companies_in_sub_industry = find_companies_by_sub_industry(sub_industry)
+
+            if len(all_companies_in_sub_industry) > 1:
+                # Sammle Excel-Kennzahlen für ALLE Unternehmen der Sub-Industry
+                all_sub_industry_data = []
+                print(f"       📋 Verarbeite {len(all_companies_in_sub_industry)} Unternehmen...")
+
+                for i, company in enumerate(all_companies_in_sub_industry, 1):
+                    if i <= 5 or i % 20 == 0:  # Zeige nur jeden 20. nach den ersten 5
+                        print(f"         {i}/{len(all_companies_in_sub_industry)}: {company['Name']}")
+
+                    company_data = get_kennzahlen_for_company(company['RIC'], excel_columns)
+                    if company_data:
+                        # Füge Basis-Informationen hinzu
+                        company_data.update({
+                            'Name': company['Name'],
+                            'RIC': company['RIC'],
+                            'Sub-Industry': company.get('Sub-Industry', ''),
+                            'Focus': company.get('Focus', '')
+                        })
+                        all_sub_industry_data.append(company_data)
+
+                if all_sub_industry_data:
+                    # Erstelle DataFrame für alle Sub-Industry Unternehmen
+                    df_sub_industry = pd.DataFrame(all_sub_industry_data)
+
+                    # Konvertiere zu numerischen Werten
+                    for col in excel_columns:
+                        df_sub_industry[col] = pd.to_numeric(df_sub_industry[col], errors='coerce')
+
+                    # Berechne Durchschnitte
+                    avg_row = {
+                        'Name': f'💼 Ø {sub_industry}',
+                        'RIC': f'AVG_SUB_{len(df_sub_industry)}',
+                        'Sub-Industry': sub_industry,
+                        'Focus': '',
+                        'Input_Source': 'Durchschnitt (Branche)'
+                    }
+
+                    for col in excel_columns:
+                        valid_values = df_sub_industry[col].dropna()
+                        if len(valid_values) > 0:
+                            avg_row[col] = valid_values.mean()
+                            print(f"       📈 {col}: {avg_row[col]:.4f} (aus {len(valid_values)} von {len(df_sub_industry)} Unternehmen)")
+                        else:
+                            avg_row[col] = None
+
+                    # Füge Durchschnitts-Zeile hinzu
+                    df = pd.concat([df, pd.DataFrame([avg_row])], ignore_index=True)
+                    print(f"       ✅ Sub-Industry Durchschnitt hinzugefügt: {sub_industry} ({len(df_sub_industry)} Unternehmen)")
+
+    # 2. FOCUS-GRUPPEN DURCHSCHNITTE (nur wenn Focus-Werte vorhanden)
+    focus_values = df_numeric['Focus'].dropna()
+    focus_values = focus_values[focus_values != '']
+
+    if len(focus_values) > 0:
+        print("   🎯 Berechne Focus-Gruppen Durchschnitte...")
+        focus_groups = df_numeric[df_numeric['Focus'] != ''].groupby('Focus')
+
+        for focus, group in focus_groups:
+            if len(group) > 1:  # Nur wenn mehr als 1 Unternehmen
+                avg_row = {
+                    'Name': f'🎯 Ø {focus}',
+                    'RIC': f'AVG_FOC_{len(group)}',
+                    'Sub-Industry': '',
+                    'Focus': focus,
+                    'Input_Source': 'Durchschnitt'
+                }
+
+                # Berechne Durchschnitt für jede Excel-Kennzahl
+                for col in excel_columns:
+                    valid_values = group[col].dropna()
+                    if len(valid_values) > 0:
+                        avg_row[col] = valid_values.mean()
+                        print(f"     📈 {col}: {avg_row[col]:.4f} (aus {len(valid_values)} Werten)")
+                    else:
+                        avg_row[col] = None
+
+                # Füge Durchschnitts-Zeile hinzu
+                df = pd.concat([df, pd.DataFrame([avg_row])], ignore_index=True)
+                print(f"     ✅ Focus-Gruppen Durchschnitt hinzugefügt: {focus}")
+    else:
+        print("   ⚠️ Keine Focus-Gruppen gefunden, überspringe Focus-Durchschnitte")
+
+    print(f"✅ Durchschnittsberechnung abgeschlossen")
+    return df
