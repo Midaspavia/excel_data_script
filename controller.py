@@ -218,11 +218,35 @@ def process_companies():
                     else:
                         print(f"   [Excel] {field}: ❌ Nicht gefunden")
 
-                # Zeige alle Refinitiv-Kennzahlen
+                # Zeige alle Refinitiv-Kennzahlen (mit intelligenter Zuordnung)
                 for field in all_refinitiv_fields:
-                    value = result.get(field, 'N/A')
-                    if value != 'N/A' and pd.notna(value):
-                        print(f"   [Refinitiv] {field}: {value}")
+                    # Suche nach der umbenannten Spalte im Result
+                    found_value = None
+                    found_key = None
+
+                    # Direkte Suche nach dem Original-Feld
+                    if field in result:
+                        found_value = result[field]
+                        found_key = field
+                    else:
+                        # Suche nach umbenannter Version (ohne "TR.")
+                        cleaned_field = field.replace("TR.", "")
+                        if cleaned_field in result:
+                            found_value = result[cleaned_field]
+                            found_key = cleaned_field
+                        else:
+                            # Fuzzy-Suche nach ähnlichen Feldern
+                            for key, value in result.items():
+                                if (field.lower() in key.lower() or
+                                    cleaned_field.lower() in key.lower() or
+                                    key.lower() in field.lower()):
+                                    found_value = value
+                                    found_key = key
+                                    break
+
+                    if found_value is not None and pd.notna(found_value) and str(found_value).strip() != '':
+                        display_key = found_key if found_key != field else field
+                        print(f"   [Refinitiv] {field} (als '{display_key}'): {found_value}")
                     else:
                         print(f"   [Refinitiv] {field}: ❌ Nicht gefunden")
 
@@ -513,11 +537,10 @@ def create_beautiful_excel_output(df, output_path, excel_fields):
     wb = load_workbook(output_path)
     ws = wb['Financial Analysis']
 
-    # 🎨 FARB-SCHEMA (Elegantes Blau-Grün Design)
-    header_fill = PatternFill(start_color="1f4e79", end_color="1f4e79", fill_type="solid")  # Dunkles Blau
-    company_fill = PatternFill(start_color="d9e2f3", end_color="d9e2f3", fill_type="solid")  # Helles Blau
-    metrics_fill = PatternFill(start_color="e2efda", end_color="e2efda", fill_type="solid")  # Helles Grün
+    # 🎨 FARB-SCHEMA (NUR ALTERNIERENDE FARBEN)
+    header_fill = PatternFill(start_color="1f4e79", end_color="1f4e79", fill_type="solid")  # Dunkles Blau für Header
     alternating_fill = PatternFill(start_color="f8f9fa", end_color="f8f9fa", fill_type="solid")  # Sehr helles Grau
+    white_fill = PatternFill(start_color="ffffff", end_color="ffffff", fill_type="solid")  # Weiß
 
     # 📝 SCHRIFT-STILE
     header_font = Font(name="Calibri", size=12, bold=True, color="FFFFFF")
@@ -578,7 +601,7 @@ def create_beautiful_excel_output(df, output_path, excel_fields):
     for row_num in range(2, len(df) + 2):
         # Alternierend gefärbte Zeilen für bessere Lesbarkeit
         is_even = (row_num % 2 == 0)
-        row_fill = alternating_fill if is_even else PatternFill(start_color="ffffff", end_color="ffffff", fill_type="solid")
+        row_fill = alternating_fill if is_even else white_fill
 
         for col_num, cell in enumerate(ws[row_num], 1):
             col_name = df.columns[col_num - 1]
@@ -586,17 +609,15 @@ def create_beautiful_excel_output(df, output_path, excel_fields):
             # Basis-Formatierung
             cell.border = thin_border
             cell.font = data_font
+            cell.fill = row_fill  # Nur alternierende Farben
 
             # Spezielle Formatierung je Spalten-Typ
             if col_name in company_cols:
-                cell.fill = company_fill if col_name == 'Name' else row_fill
                 cell.font = company_font if col_name == 'Name' else Font(name="Calibri", size=10, bold=True, color="1f4e79")
                 cell.alignment = left_alignment
             elif col_name in category_cols:
-                cell.fill = row_fill
                 cell.alignment = center_alignment
             elif col_name in metric_cols:
-                cell.fill = metrics_fill if not is_even else row_fill
                 cell.alignment = right_alignment
 
                 # Formatiere Zahlen schön
@@ -610,7 +631,6 @@ def create_beautiful_excel_output(df, output_path, excel_fields):
                     except:
                         pass
             else:
-                cell.fill = row_fill
                 cell.alignment = left_alignment
 
         # Zeilenhöhe optimieren
@@ -643,20 +663,8 @@ def create_beautiful_excel_output(df, output_path, excel_fields):
 
         ws.column_dimensions[col_letter].width = width
 
-    # 5️⃣ CONDITIONAL FORMATTING FÜR KENNZAHLEN
-    print("  🎯 Füge Conditional Formatting hinzu...")
-    for col_num, col_name in enumerate(df.columns, 1):
-        if col_name in metric_cols:
-            col_letter = ws.cell(row=1, column=col_num).column_letter
-            data_range = f"{col_letter}2:{col_letter}{len(df)+1}"
-
-            # Farbverlauf für bessere Visualisierung (Grün für hohe, Rot für niedrige Werte)
-            color_scale = ColorScaleRule(
-                start_type='min', start_color='ffcccc',  # Helles Rot
-                mid_type='percentile', mid_value=50, mid_color='ffffcc',  # Helles Gelb
-                end_type='max', end_color='ccffcc'  # Helles Grün
-            )
-            ws.conditional_formatting.add(data_range, color_scale)
+    # 5️⃣ CONDITIONAL FORMATTING ENTFERNT
+    # (Keine Farbvergleiche mehr für Kennzahlen-Spalten)
 
     # 6️⃣ TITEL UND METADATA HINZUFÜGEN
     print("  🎯 Füge Titel hinzu...")
@@ -694,7 +702,7 @@ def create_beautiful_excel_output(df, output_path, excel_fields):
     metadata_cell.font = Font(name="Calibri", size=9, italic=True, color="666666")
     metadata_cell.alignment = left_alignment
 
-    # Metadata über mehrere Spalten mergen
+    # Metadata über mehrere spalten mergen
     ws.merge_cells(start_row=last_row, start_column=1, end_row=last_row, end_column=min(6, len(df.columns)))
 
     # Speichere formatierte Datei
