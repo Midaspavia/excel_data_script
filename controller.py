@@ -45,8 +45,18 @@ def process_companies():
 
             # Kennzahlen aus der ersten Zeile für alle verwenden
             first_row = df_input.iloc[0]
-            excel_fields = df_input["Kennzahlen aus Excel"].dropna().astype(str).str.strip().tolist()
-            refinitiv_fields = df_input["Kennzahlen aus Refinitiv"].dropna().astype(str).str.strip().tolist()
+            excel_fields_raw = df_input["Kennzahlen aus Excel"].dropna().astype(str).str.strip().tolist()
+            refinitiv_fields_raw = df_input["Kennzahlen aus Refinitiv"].dropna().astype(str).str.strip().tolist()
+
+            # KORRIGIERT: Entferne Duplikate aus Kennzahlen-Listen (behält Reihenfolge bei)
+            excel_fields = list(dict.fromkeys(excel_fields_raw))
+            refinitiv_fields = list(dict.fromkeys(refinitiv_fields_raw))
+
+            # Zeige Duplikat-Bereinigung an
+            if len(excel_fields_raw) != len(excel_fields):
+                print(f"🔧 Excel-Kennzahlen: {len(excel_fields_raw)} → {len(excel_fields)} (Duplikate entfernt)")
+            if len(refinitiv_fields_raw) != len(refinitiv_fields):
+                print(f"🔧 Refinitiv-Kennzahlen: {len(refinitiv_fields_raw)} → {len(refinitiv_fields)} (Duplikate entfernt)")
 
             # Filter-Einstellungen aus der ersten Zeile
             sub_industry_filter = str(first_row.get("Sub-Industry", "")).strip().upper()
@@ -177,6 +187,12 @@ def process_companies():
 
             print(f"\n📊 INSGESAMT {len(all_results)} UNTERNEHMEN VERARBEITET")
             print("💾 Speichere in output.xlsx...")
+
+            # KORRIGIERT: Stelle sicher, dass Output-Verzeichnis existiert
+            output_dir = os.path.dirname(output_path)
+            if not os.path.exists(output_dir):
+                print(f"📁 Erstelle fehlendes Verzeichnis: {output_dir}")
+                os.makedirs(output_dir, exist_ok=True)
 
             # Erstelle schön formatierte Excel-Datei
             all_refinitiv_fields = []
@@ -436,21 +452,34 @@ def find_company_by_name(name):
                     if len(df.columns) < 5:
                         continue
 
-                    # Finde Name-Spalte (Universe oder Holding)
-                    name_col = df.columns[1]
-                    ric_col = df.columns[4]
+                    # KORRIGIERT: Suche sowohl in Spalte A (Holding) als auch Spalte B (Universe)
+                    holding_col = df.columns[0]  # Spalte A (Holding)
+                    universe_col = df.columns[1]  # Spalte B (Universe)
 
-                    # Suche nach dem Namen (Teilwortsuche, Groß-/Kleinschreibung ignorieren)
-                    matches = df[df[name_col].astype(str).str.contains(name, case=False, na=False)]
+                    # Suche in beiden Spalten
+                    holding_matches = df[df[holding_col].astype(str).str.contains(name, case=False, na=False)]
+                    universe_matches = df[df[universe_col].astype(str).str.contains(name, case=False, na=False)]
+
+                    # Kombiniere beide Ergebnisse, bevorzuge aber Holding-Treffer
+                    matches = holding_matches if not holding_matches.empty else universe_matches
 
                     if not matches.empty:
                         row = matches.iloc[0]
 
                         # Direkte Index-Zugriffe
-                        sub_industry = str(row.iloc[2]).strip()  # Spalte C
-                        focus_value = str(row.iloc[3]).strip()   # Spalte D
-                        ric_value = str(row.iloc[4]).strip()     # Spalte E
-                        name_value = str(row.iloc[1]).strip()    # Spalte B (Universe)
+                        holding_value = str(row.iloc[0]).strip()   # Spalte A (Holding)
+                        universe_value = str(row.iloc[1]).strip()  # Spalte B (Universe)
+                        sub_industry = str(row.iloc[2]).strip()    # Spalte C
+                        focus_value = str(row.iloc[3]).strip()     # Spalte D
+                        ric_value = str(row.iloc[4]).strip()       # Spalte E
+
+                        # Bestimme den Namen (Holding hat Priorität)
+                        if holding_value and holding_value != 'nan' and len(holding_value.strip()) > 2:
+                            name_value = holding_value
+                            found_in = "Holding"
+                        else:
+                            name_value = universe_value
+                            found_in = "Universe"
 
                         company = {
                             "Name": name_value,
@@ -458,7 +487,7 @@ def find_company_by_name(name):
                             "Sub-Industry": sub_industry,
                             "Focus": focus_value
                         }
-                        print(f"✅ GEFUNDEN: {company['Name']} ({company['RIC']})")
+                        print(f"✅ GEFUNDEN: {company['Name']} ({company['RIC']}) in {found_in}-Spalte")
                         print(f"   Sub-Industry (Spalte C): '{company['Sub-Industry']}'")
                         print(f"   Focus (Spalte D): '{company['Focus']}'")
                         return company

@@ -40,18 +40,18 @@
 | 1.3.3 | Nicht existierende Excel-Kennzahlen | "XYZ123" | Leerer oder N/A Wert in Ergebnis | ✅ |
 | 1.3.4 | Nicht existierende Refinitiv-Kennzahlen | "TR.NonExistent" | Leerer oder N/A Wert in Ergebnis | ✅ |
 | 1.3.5 | Keine Kennzahlen angegeben | [] | Minimale Ausgabe (nur Name, RIC, etc.) | ✅ |
-| 1.3.6 | Duplikate in Kennzahlen | ["ISIN", "ISIN"] | Duplikate werden ignoriert | ⏳ |
-| 1.3.7 | Mix aus gültigen und ungültigen Kennzahlen | ["ISIN", "XYZ123"] | Gültige werden verarbeitet, ungültige ignoriert | ⏳ |
+| 1.3.6 | Duplikate in Kennzahlen | ["ISIN", "ISIN"] | Duplikate werden ignoriert | ✅ |
+| 1.3.7 | Mix aus gültigen und ungültigen Kennzahlen | ["ISIN", "XYZ123"] | Gültige werden verarbeitet, ungültige ignoriert | ✅ |
 
 ### 1.4 Mehrere Unternehmen im Input
 
 | ID | Äquivalenzklasse | Beispielwerte | Erwartetes Verhalten | Status |
 |----|-----------------|--------------|---------------------|--------|
-| 1.4.1 | Mehrere Unternehmen mit gleicher Sub-Industry | "Hermes", "Ralph Lauren" | Alle Unternehmen der gleichen Sub-Industry ohne Duplikate | ⏳ |
-| 1.4.2 | Mehrere Unternehmen mit unterschiedlicher Sub-Industry | "Hermes", "Netflix" | Unternehmen beider Sub-Industries | ⏳ |
-| 1.4.3 | Mehrere Unternehmen mit gleichem Focus | "Hermes", "Brunello Cucinelli" | Alle Unternehmen des gleichen Focus ohne Duplikate | ⏳ |
-| 1.4.4 | Mix aus Sub-Industry und Focus Filterung | Zeile 1: Sub-Industry="X", Zeile 2: Focus="X" | Jedes Unternehmen nach seinem Filter-Kriterium | ⏳ |
-| 1.4.5 | Doppelte Unternehmen im Input | "RL.N" in Zeile 1 & 2 | Duplikaterkennung, nur einmal verarbeiten | ⏳ |
+| 1.4.1 | Mehrere Unternehmen mit gleicher Sub-Industry | "Hermes", "Ralph Lauren" | Alle Unternehmen der gleichen Sub-Industry ohne Duplikate | ✅ |
+| 1.4.2 | Mehrere Unternehmen mit unterschiedlicher Sub-Industry | "Hermes", "Nike" | Unternehmen beider Sub-Industries | ✅ |
+| 1.4.3 | Mehrere Unternehmen mit gleichem Focus | "Hermes", "Brunello Cucinelli" | Alle Unternehmen des gleichen Focus ohne Duplikate | ✅ |
+| 1.4.4 | Mix aus Sub-Industry und Focus Filterung | Zeile 1: Sub-Industry="X", Zeile 2: Focus="X" | Jedes Unternehmen nach seinem Filter-Kriterium | ✅ |
+| 1.4.5 | Doppelte Unternehmen im Input | "RL.N" in Zeile 1 & 2 | Duplikaterkennung, nur einmal verarbeiten | ✅ |
 
 ## 2. Grenzfälle und spezielle Szenarien
 
@@ -63,7 +63,7 @@
 | 2.4 | Formatfehler in Excel | Falsch formatierte Zellen | Robuste Fehlerbehandlung, bestmögliche Datenextraktion | ⏳ |
 | 2.5 | Refinitiv API nicht verfügbar | API-Ausfall | Robuste Fehlerbehandlung, Fortsetzung mit Excel-Daten | ⏳ |
 | 2.6 | Refinitiv Ratenlimitierung | API-Limit erreicht | Robuste Fehlerbehandlung, evtl. Wartezeiten | ⏳ |
-| 2.7 | Output-Verzeichnis existiert nicht | "data" Verzeichnis fehlt | Verzeichnis erstellen oder Fehlermeldung | ⏳ |
+| 2.7 | Output-Verzeichnis existiert nicht | "data" Verzeichnis fehlt | Verzeichnis erstellen oder Fehlermeldung | ✅ |
 | 2.8 | Output-Datei bereits vorhanden | output.xlsx existiert bereits | Überschreiben oder Backup der alten Datei | ⏳ |
 
 ## 3. Kombinationsszenarien
