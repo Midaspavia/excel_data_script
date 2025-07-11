@@ -198,6 +198,42 @@ def process_companies():
             print("\n🔢 BERECHNE DURCHSCHNITTE FÜR EXCEL-KENNZAHLEN...")
             df_output_with_averages = calculate_excel_averages(df_output, excel_fields)
 
+            # 🏭 BERECHNE CONSUMER DISCRETIONARY SECTOR DURCHSCHNITTE FÜR REFINITIV-KENNZAHLEN
+            if refinitiv_fields:
+                print("\n🏭 BERECHNE CONSUMER DISCRETIONARY SECTOR DURCHSCHNITTE...")
+                from refinitiv_integration import get_consumer_discretionary_sector_average
+                sector_averages = get_consumer_discretionary_sector_average(refinitiv_fields)
+
+                if sector_averages:
+                    # Füge Sector-Durchschnitt als neue Zeile hinzu
+                    sector_avg_row = {
+                        'Name': '🏭 Ø Consumer Discretionary Sector',
+                        'RIC': f'AVG_GICS25_{len(sector_averages)}',
+                        'Sub-Industry': '',
+                        'Focus': '',
+                        'Input_Source': 'Durchschnitt (GICS Sector 25)'
+                    }
+
+                    # Füge Refinitiv-Kennzahlen-Durchschnitte hinzu
+                    for field, avg_value in sector_averages.items():
+                        # Verwende den ursprünglichen Feldnamen (ohne TR.)
+                        clean_field = field.replace('TR.', '') if field.startswith('TR.') else field
+
+                        # Suche nach dem tatsächlichen Spaltennamen im DataFrame
+                        matching_cols = [col for col in df_output_with_averages.columns if clean_field.lower() in col.lower() or col.lower() in clean_field.lower()]
+
+                        if matching_cols:
+                            sector_avg_row[matching_cols[0]] = avg_value
+                            print(f"   📈 {matching_cols[0]}: {avg_value:.4f} (Sector-Durchschnitt)")
+                        else:
+                            # Fallback: Verwende den bereinigten Feldnamen
+                            sector_avg_row[clean_field] = avg_value
+                            print(f"   📈 {clean_field}: {avg_value:.4f} (Sector-Durchschnitt)")
+
+                    # Füge Sector-Durchschnitts-Zeile zum DataFrame hinzu
+                    df_output_with_averages = pd.concat([df_output_with_averages, pd.DataFrame([sector_avg_row])], ignore_index=True)
+                    print(f"   ✅ Consumer Discretionary Sector-Durchschnitt hinzugefügt")
+
             # Erstelle schön formatierte Excel-Datei
             all_refinitiv_fields = []
             if refinitiv_fields:

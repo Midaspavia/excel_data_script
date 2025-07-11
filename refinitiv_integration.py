@@ -1,6 +1,7 @@
 import pandas as pd
 import refinitiv.data as rd
 import warnings
+import numpy as np
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
@@ -134,6 +135,95 @@ def get_refinitiv_kennzahlen_for_companies(companies, refinitiv_fields):
 
     except Exception as e:
         print(f"❌ Fehler bei Refinitiv-Datenabfrage: {e}")
+        return {}
+    finally:
+        try:
+            rd.close_session()
+            print("✅ Refinitiv-Session geschlossen")
+        except:
+            pass
+
+def get_consumer_discretionary_sector_average(refinitiv_fields):
+    """
+    Berechnet den Durchschnitt für ALLE Refinitiv-Kennzahlen über den gesamten
+    GICS Consumer Discretionary Sector (25) mit Ausreißer-Filterung (5% oben/unten)
+    """
+    print("🏭 BERECHNE CONSUMER DISCRETIONARY SECTOR DURCHSCHNITTE...")
+
+    if not refinitiv_fields:
+        print("⚠️ Keine Refinitiv-Kennzahlen angegeben")
+        return {}
+
+    sector_averages = {}
+
+    try:
+        print("🔄 Öffne Refinitiv-Session für Sector-Analyse...")
+        rd.open_session()
+
+        # Verwende vereinfachte Methode für Sector-Screening
+        print("📋 Hole Consumer Discretionary Sektor-Durchschnitte...")
+
+        # Berechne für jede Refinitiv-Kennzahl den Sektor-Durchschnitt
+        for field_expr in refinitiv_fields:
+            if not field_expr.strip():
+                continue
+
+            # Stelle sicher, dass TR. am Anfang steht
+            if not field_expr.startswith('TR.'):
+                field_expr = 'TR.' + field_expr
+
+            try:
+                print(f"📊 Berechne Sektor-Durchschnitt für: {field_expr}")
+
+                # Hole Daten für Consumer Discretionary Sector
+                sector_data = rd.get_data(
+                    universe='SCREEN(U(IN(Equity(active,public,primary))/*UNV:Public*/), IN(TR.GICSSectorCode,"25"), CURN=USD)',
+                    fields=[field_expr]
+                )
+
+                if not sector_data.empty:
+                    # Resolva den echten Spaltennamen
+                    resolved_col_name = resolve_field_name(field_expr)
+
+                    # Finde die richtige Spalte
+                    data_col = None
+                    for col in sector_data.columns:
+                        if col != 'Instrument':
+                            data_col = col
+                            break
+
+                    if data_col:
+                        # Konvertiere zu numerischen Werten
+                        values = pd.to_numeric(sector_data[data_col], errors='coerce').dropna()
+
+                        if not values.empty and len(values) > 10:  # Mindestens 10 Werte für sinnvollen Durchschnitt
+                            # Entferne Ausreißer (5% und 95% Quantile)
+                            lower = values.quantile(0.05)
+                            upper = values.quantile(0.95)
+                            filtered_values = values[(values >= lower) & (values <= upper)]
+
+                            if not filtered_values.empty:
+                                avg = round(filtered_values.mean(), 4)
+                                sector_averages[resolved_col_name] = avg
+                                print(f"   ✅ {resolved_col_name}: {avg:,} (aus {len(filtered_values)} Werten)")
+                            else:
+                                print(f"   ❌ {resolved_col_name}: Keine Werte nach Filterung")
+                        else:
+                            print(f"   ❌ {resolved_col_name}: Zu wenig Daten ({len(values)} Werte)")
+                    else:
+                        print(f"   ❌ {field_expr}: Keine Datenspalte gefunden")
+                else:
+                    print(f"   ❌ {field_expr}: Keine Sektor-Daten erhalten")
+
+            except Exception as e:
+                print(f"   ❌ Fehler bei {field_expr}: {e}")
+                continue
+
+        print(f"✅ {len(sector_averages)} Sektor-Durchschnitte berechnet")
+        return sector_averages
+
+    except Exception as e:
+        print(f"❌ Fehler bei Sektor-Durchschnittsberechnung: {e}")
         return {}
     finally:
         try:
