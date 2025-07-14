@@ -70,10 +70,62 @@
 
 | ID | Szenario | Kombination | Erwartetes Verhalten | Status |
 |----|----------|------------|---------------------|--------|
-| 3.1 | Mix aus allen Filtertypen | Mehrere Zeilen mit unterschiedlichen Filtern | Korrekte Verarbeitung aller Filter | ⏳ |
-| 3.2 | Mix aus Namen und RICs | Einige Zeilen mit RIC, andere mit Namen | Korrekte Identifikation aller Unternehmen | ⏳ |
-| 3.3 | Mix aus Excel und Refinitiv | Beide Kennzahlentypen kombiniert | Daten aus beiden Quellen korrekt zusammengeführt | ⏳ |
-| 3.4 | Teilweise fehlerhafte Eingaben | Einige gültige, einige ungültige Zeilen | Gültige verarbeiten, Fehler protokollieren | ⏳ |
+| 3.1 | Mix aus allen Filtertypen | Zeile 1: Sub-Industry="X", Zeile 2: Focus="X", Zeile 3: Keine Markierung | Korrekte Verarbeitung aller Filter, Sub-Industry für Zeile 3 | ✅ MP |
+| 3.2 | Mix aus Namen und RICs | Zeile 1: Name="Hermes", Zeile 2: RIC="RL.N", Zeile 3: Name="Nike" | Korrekte Identifikation aller Unternehmen | ✅ MP |
+| 3.3 | Mix aus Excel und Refinitiv | Kennzahlen: ["ISIN", "P/E", "TR.Revenue", "TR.EBITDA"] | Daten aus beiden Quellen korrekt zusammengeführt | ✅ MP |
+| 3.4 | Teilweise fehlerhafte Eingaben | Zeile 1: Gültiger Name, Zeile 2: Ungültiger RIC, Zeile 3: Zu kurzer Name | Gültige verarbeiten, Fehler protokollieren | ✅ MP |
+| 3.5 | Mehrere Unternehmen + viele Kennzahlen | 3 Unternehmen + 8 Kennzahlen (4 Excel, 4 Refinitiv) | Vollständige Datenmatrix mit Durchschnittswerten | ✅ MP |
+| 3.6 | Überlappende Sub-Industries | Mehrere Unternehmen aus gleicher Sub-Industry über verschiedene Eingaben | Keine Duplikate, korrekte Gruppierung | ✅ MP |
+| 3.7 | Überlappende Focus-Gruppen | Mehrere Unternehmen aus gleicher Focus-Gruppe über verschiedene Eingaben | Keine Duplikate, korrekte Gruppierung | ✅ MP |
+| 3.8 | Gemischte Kennzahlen mit Fehlern | Gültige + ungültige Excel-Kennzahlen + gültige + ungültige Refinitiv-Kennzahlen | Nur gültige Kennzahlen verarbeitet, Fehler protokolliert | ✅ MP |
+| 3.9 | Große Kombinationen | 5 Unternehmen + 15 Kennzahlen + gemischte Filter | Vollständige Verarbeitung mit Performance-Überwachung | ✅ MP |
+| 3.10 | Verschiedene Sektoren | Unternehmen aus verschiedenen GICS-Sektoren | Korrekte Sektorklassifikation und -durchschnitte | ✅ MP |
+| 3.11 | Unternehmen ohne Focus + Focus-Filter | Unternehmen ohne Focus-Wert bei Focus-Filterung | Fallback auf Sub-Industry mit Warnung | ❌ MP |
+| 3.12 | Leere Kennzahlen + gültige Kennzahlen | Einige leere Kennzahl-Zellen, andere gefüllt | Nur gültige Kennzahlen verarbeitet | ⏳ MP |
+| 3.13 | Duplikate in verschiedenen Formen | "RL.N" + "Ralph Lauren" im selben Input | Duplikaterkennung funktioniert | ⏳ MP |
+| 3.14 | Teilname-Matching Variationen | "Ralph", "Lauren", "Ralph Lauren Corp" | Korrekte Zuordnung zu einem Unternehmen | ⏳ MP |
+| 3.15 | Mehrsprachige Namen | Namen mit Umlauten oder Sonderzeichen | Korrekte Verarbeitung und Matching | ⏳ MP |
+
+## 3.1 Detaillierte Kombinationstest-Szenarien
+
+### 3.1.1 Minimale Kombinationen
+- **Test A**: 1 Name + 1 RIC + Sub-Industry Filter + 2 Excel-Kennzahlen
+- **Test B**: 2 Namen + Focus Filter + 1 Refinitiv-Kennzahl
+- **Test C**: 3 RICs + gemischte Filter + 1 Excel + 1 Refinitiv Kennzahl
+
+### 3.1.2 Mittlere Kombinationen
+- **Test D**: 3 Unternehmen (1 Name, 2 RICs) + alle Filter-Varianten + 5 Kennzahlen
+- **Test E**: 5 Unternehmen + Focus-Filter + 3 Excel + 2 Refinitiv Kennzahlen
+- **Test F**: 4 Unternehmen aus verschiedenen Sub-Industries + Sub-Industry Filter
+
+### 3.1.3 Maximale Kombinationen
+- **Test G**: 10 Unternehmen + alle verfügbaren Kennzahlen + gemischte Filter
+- **Test H**: Alle Luxury-Unternehmen + Focus-Filter + Top 10 Kennzahlen
+- **Test I**: Alle Consumer Discretionary + Sub-Industry Filter + Refinitiv-Kennzahlen
+
+## 3.2 Fehlerbehandlungs-Kombinationen
+
+### 3.2.1 Teilweise fehlerhafte Eingaben
+- **Test J**: 50% gültige, 50% ungültige Unternehmen + verschiedene Kennzahlen
+- **Test K**: Gültige Unternehmen + 30% ungültige Kennzahlen
+- **Test L**: Gemischte Eingaben mit verschiedenen Fehlertypen
+
+### 3.2.2 Rand- und Grenzfälle
+- **Test M**: Maximale Anzahl Unternehmen (100+) + minimale Kennzahlen
+- **Test N**: Minimale Anzahl Unternehmen (1) + maximale Kennzahlen
+- **Test O**: Alle möglichen Filter-Kombinationen gleichzeitig
+
+## 3.3 Performance-Kombinationen
+
+### 3.3.1 Datenvolumen-Tests
+- **Test P**: 50 Unternehmen + 20 Kennzahlen (Zeit < 5 Min.)
+- **Test Q**: 100 Unternehmen + 10 Kennzahlen (Zeit < 10 Min.)
+- **Test R**: 10 Unternehmen + 50 Kennzahlen (Zeit < 3 Min.)
+
+### 3.3.2 API-Belastungstests
+- **Test S**: Viele Refinitiv-Calls gleichzeitig
+- **Test T**: Sequenzielle vs. parallele Verarbeitung
+- **Test U**: Ratenlimit-Verhalten bei großen Anfragen
 
 ## 4. Leistungstests
 
@@ -112,6 +164,15 @@
 
 | Datum | Testfall-ID | Getestet von | Ergebnis | Kommentar |
 |-------|------------|--------------|----------|------------|
+| 2025-07-14 | 3.1 | MP | ✅ | Mix aus allen Filtertypen funktioniert: Hermes (Name+Sub-Industry), RL.N (RIC+Focus), Nike (Name+Standard) |
+| 2025-07-14 | 3.2 | MP | ✅ | Mix aus Namen und RICs funktioniert: Hermes (Name), RL.N (RIC), Nike (Name) |
+| 2025-07-14 | 3.3 | MP | ✅ | Mix aus Excel und Refinitiv funktioniert: Hermes + 4 Excel + 4 Refinitiv Kennzahlen |
+| 2025-07-14 | 3.4 | MP | ✅ | Teilweise fehlerhafte Eingaben verarbeitet: Gültige Einträge übernommen, Fehler protokolliert |
+| 2025-07-14 | 3.5 | MP | ✅ | Mehrere Unternehmen + viele Kennzahlen erfolgreich: Vollständige Datenmatrix erstellt |
+| 2025-07-14 | 3.6 | MP | ✅ | Überlappende Sub-Industries korrekt gruppiert, keine Duplikate |
+| 2025-07-14 | 3.7 | MP | ✅ | Überlappende Focus-Gruppen korrekt gruppiert, keine Duplikate |
+| 2025-07-14 | 3.8 | MP | ✅ | Gemischte Kennzahlen mit Fehlern: Gültige verarbeitet, ungültige ignoriert |
+| 2025-07-14 | 3.9 | MP | ✅ | Große Kombinationen läuft: 5 Unternehmen + 10 Kennzahlen, Performance-Test |
 | YYYY-MM-DD | 1.1.1 | | | |
 | YYYY-MM-DD | 1.1.2 | | | |
 | YYYY-MM-DD | 1.2.1 | | | |

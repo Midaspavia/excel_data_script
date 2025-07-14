@@ -1,7 +1,6 @@
 import pandas as pd
 import refinitiv.data as rd
 import warnings
-import numpy as np
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
@@ -70,7 +69,7 @@ def calculate_gics_average(field_expression, resolved_col_name):
             col = sample.columns[-1]
             values = pd.to_numeric(sample[col], errors='coerce').dropna()
             if not values.empty:
-                # Entferne Ausreißer (5% und 95% Quantile)
+                # Entferne Ausreißer (5 % und 95 % Quantile)
                 lower = values.quantile(0.05)
                 upper = values.quantile(0.95)
                 values = values[(values >= lower) & (values <= upper)]
@@ -197,7 +196,7 @@ def get_consumer_discretionary_sector_average(refinitiv_fields):
                         values = pd.to_numeric(sector_data[data_col], errors='coerce').dropna()
 
                         if not values.empty and len(values) > 10:  # Mindestens 10 Werte für sinnvollen Durchschnitt
-                            # Entferne Ausreißer (5% und 95% Quantile)
+                            # Entferne Ausreißer (5 % und 95 % Quantile)
                             lower = values.quantile(0.05)
                             upper = values.quantile(0.95)
                             filtered_values = values[(values >= lower) & (values <= upper)]

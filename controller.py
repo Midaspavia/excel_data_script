@@ -131,7 +131,7 @@ def process_companies():
             print(f"   ✅ Gefunden: {start_company['Name']} ({start_company['RIC']})")
 
             # Bestimme Gruppe für Filterung
-            if is_focus and start_company.get('Focus'):
+            if is_focus and start_company.get('Focus') and str(start_company.get('Focus')).strip().lower() not in ['', 'nan', 'none']:
                 group_key = f"focus_{start_company['Focus']}"
                 if group_key in processed_groups:
                     print(f"   ⏭️  Focus-Gruppe '{start_company['Focus']}' bereits verarbeitet")
@@ -139,6 +139,16 @@ def process_companies():
                 processed_groups.add(group_key)
                 print(f"   🎯 Focus-Modus: Suche nach Focus-Gruppe '{start_company['Focus']}'")
                 peer_companies = find_companies_by_focus(start_company['Focus'])
+            elif is_focus and (not start_company.get('Focus') or str(start_company.get('Focus')).strip().lower() in ['', 'nan', 'none']):
+                # FALLBACK: Wenn Focus-Filter gewählt, aber Unternehmen hat keinen Focus-Wert
+                group_key = f"subindustry_{start_company.get('Sub-Industry')}"
+                if group_key in processed_groups:
+                    print(f"   ⏭️  Sub-Industry '{start_company.get('Sub-Industry')}' bereits verarbeitet")
+                    continue
+                processed_groups.add(group_key)
+                print(f"   ⚠️  Focus-Filter gewählt, aber Unternehmen hat keinen Focus-Wert")
+                print(f"   🔄 Fallback auf Sub-Industry-Modus: Suche nach Sub-Industry '{start_company.get('Sub-Industry')}'")
+                peer_companies = find_companies_by_sub_industry(start_company.get('Sub-Industry'))
             else:
                 group_key = f"subindustry_{start_company.get('Sub-Industry')}"
                 if group_key in processed_groups:
@@ -300,19 +310,41 @@ def process_companies():
                     else:
                         print(f"   [Excel] {field}: ❌ Nicht gefunden")
 
-                # Zeige alle Refinitiv-Kennzahlen (mit intelligenter Zuordnung)
+                # KORRIGIERT: Finde ALLE Refinitiv-Spalten im DataFrame (nicht nur die ursprünglich angeforderten)
+                # Sammle alle Refinitiv-relevanten Spalten aus dem tatsächlichen DataFrame
+                actual_refinitiv_columns = []
+
+                # 1. Alle ursprünglich angeforderten Refinitiv-Felder
                 for field in all_refinitiv_fields:
-                    # Suche nach der umbenannten Spalte im Result
+                    actual_refinitiv_columns.append(field)
+
+                # 2. Alle Spalten im result, die wie Refinitiv-Felder aussehen
+                for key in result.keys():
+                    # Überspringt Basis-Spalten und Excel-Kennzahlen
+                    if key not in ['Name', 'RIC', 'Sub-Industry', 'Focus', 'Input_Source'] and key not in excel_fields:
+                        # Prüft, ob es ein potentielles Refinitiv-Feld ist
+                        if (key.startswith('TR.') or
+                            any(key.upper() == ref_field.replace('TR.', '').upper() for ref_field in all_refinitiv_fields) or
+                            key.upper() in ['EBIT', 'EBITDA', 'TOTALRETURN', 'TOTALASSETS']):  # Häufige Refinitiv-Felder
+                            if key not in actual_refinitiv_columns:
+                                actual_refinitiv_columns.append(key)
+
+                # Entferne Duplikate und behalte Reihenfolge
+                actual_refinitiv_columns = list(dict.fromkeys(actual_refinitiv_columns))
+
+                # Zeige alle gefundenen Refinitiv-Kennzahlen
+                for field in actual_refinitiv_columns:
+                    # Suche nach der Spalte im Result
                     found_value = None
                     found_key = None
 
-                    # Direkte Suche nach dem Original-Feld
+                    # Direkte Suche nach dem Feld
                     if field in result:
                         found_value = result[field]
                         found_key = field
                     else:
-                        # Suche nach umbenannter Version (ohne "TR.")
-                        cleaned_field = field.replace("TR.", "")
+                        # Erweiterte Suche für ursprünglich angeforderte Felder
+                        cleaned_field = field.replace("TR.", "") if field.startswith("TR.") else field
                         if cleaned_field in result:
                             found_value = result[cleaned_field]
                             found_key = cleaned_field
@@ -327,8 +359,16 @@ def process_companies():
                                     break
 
                     if found_value is not None and pd.notna(found_value) and str(found_value).strip() != '':
-                        display_key = found_key if found_key != field else field
-                        print(f"   [Refinitiv] {field} (als '{display_key}'): {found_value}")
+                        # Bestimme Label für Ausgabe
+                        if field in all_refinitiv_fields:
+                            display_label = f"[Refinitiv] {field}"
+                        else:
+                            display_label = f"[Refinitiv*] {field}"  # * für neu erstellte Spalten
+
+                        if found_key != field:
+                            print(f"   {display_label} (als '{found_key}'): {found_value}")
+                        else:
+                            print(f"   {display_label}: {found_value}")
                     else:
                         print(f"   [Refinitiv] {field}: ❌ Nicht gefunden")
 
@@ -875,7 +915,7 @@ def calculate_excel_averages(df, excel_fields):
                     # Berechne Durchschnitte
                     avg_row = {
                         'Name': f'💼 Ø {sub_industry}',
-                        'RIC': f'AVG_SUB_{len(df_sub_industry)}',
+                        'RIC': f'Branche-Ø ({len(df_sub_industry)} Unternehmen)',
                         'Sub-Industry': sub_industry,
                         'Focus': '',
                         'Input_Source': 'Durchschnitt (Branche)'
