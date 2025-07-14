@@ -286,14 +286,35 @@ def process_companies():
                     print(f"   ✅ Consumer Discretionary Sector-Durchschnitt hinzugefügt")
 
                     print(f"   🔍 DEBUG: Finale Spalten: {list(df_output_with_averages.columns)}")
+            # KORRIGIERT: Filtere Output-DataFrame, um nur angeforderte Kennzahlen zu behalten
+            print(f"\n🔍 FILTERE OUTPUT AUF NUR ANGEFORDERTE KENNZAHLEN...")
+
+            # Basis-Spalten die immer beibehalten werden
+            base_columns = ['Name', 'RIC', 'Sub-Industry', 'Focus', 'Input_Source']
+
+            # Sammle alle erlaubten Spalten
+            allowed_columns = base_columns.copy()
+            allowed_columns.extend(excel_fields)  # Angeforderte Excel-Kennzahlen
+
+            # Füge Refinitiv-Kennzahlen hinzu (mit und ohne TR. Präfix)
+            for ref_field in refinitiv_fields:
+                allowed_columns.append(ref_field)  # Original (z.B. TR.EBIT)
+                clean_field = ref_field.replace('TR.', '') if ref_field.startswith('TR.') else ref_field
+                allowed_columns.append(clean_field)  # Ohne TR. (z.B. EBIT)
+
+            # Filtere DataFrame auf nur erlaubte Spalten
+            existing_allowed_columns = [col for col in allowed_columns if col in df_output_with_averages.columns]
+            df_output_cleaned = df_output_with_averages[existing_allowed_columns].copy()
+
+            print(f"   📊 Ursprüngliche Spalten: {len(df_output_with_averages.columns)}")
+            print(f"   ✅ Gefilterte Spalten: {len(df_output_cleaned.columns)}")
+            print(f"   📋 Behaltene Spalten: {list(df_output_cleaned.columns)}")
+
             # Erstelle schön formatierte Excel-Datei
-            all_refinitiv_fields = []
-            if refinitiv_fields:
-                all_refinitiv_fields = refinitiv_fields
-            create_beautiful_excel_output(df_output_with_averages, output_path, excel_fields)
+            create_beautiful_excel_output(df_output_cleaned, output_path, excel_fields, len(all_results))
 
             print(f"\n✅ SCHÖN FORMATIERTES OUTPUT GESPEICHERT: {output_path}")
-            print(f"📊 {len(df_output_with_averages)} Zeilen insgesamt (inkl. Durchschnitte) mit {len(df_output_with_averages.columns)} Spalten")
+            print(f"📊 {len(all_results)} Unternehmen + {len(df_output_cleaned) - len(all_results)} Durchschnittswerte = {len(df_output_cleaned)} Zeilen insgesamt mit {len(df_output_cleaned.columns)} Spalten")
 
             # Zeige Übersicht
             print(f"\n📋 ERGEBNIS-ÜBERSICHT:")
@@ -315,7 +336,7 @@ def process_companies():
                 actual_refinitiv_columns = []
 
                 # 1. Alle ursprünglich angeforderten Refinitiv-Felder
-                for field in all_refinitiv_fields:
+                for field in refinitiv_fields:
                     actual_refinitiv_columns.append(field)
 
                 # 2. Alle Spalten im result, die wie Refinitiv-Felder aussehen
@@ -324,7 +345,7 @@ def process_companies():
                     if key not in ['Name', 'RIC', 'Sub-Industry', 'Focus', 'Input_Source'] and key not in excel_fields:
                         # Prüft, ob es ein potentielles Refinitiv-Feld ist
                         if (key.startswith('TR.') or
-                            any(key.upper() == ref_field.replace('TR.', '').upper() for ref_field in all_refinitiv_fields) or
+                            any(key.upper() == ref_field.replace('TR.', '').upper() for ref_field in refinitiv_fields) or
                             key.upper() in ['EBIT', 'EBITDA', 'TOTALRETURN', 'TOTALASSETS']):  # Häufige Refinitiv-Felder
                             if key not in actual_refinitiv_columns:
                                 actual_refinitiv_columns.append(key)
@@ -360,7 +381,7 @@ def process_companies():
 
                     if found_value is not None and pd.notna(found_value) and str(found_value).strip() != '':
                         # Bestimme Label für Ausgabe
-                        if field in all_refinitiv_fields:
+                        if field in refinitiv_fields:
                             display_label = f"[Refinitiv] {field}"
                         else:
                             display_label = f"[Refinitiv*] {field}"  # * für neu erstellte Spalten
@@ -664,7 +685,7 @@ def find_company_by_name(name):
     print(f"❌ Name '{name}' nicht gefunden")
     return None
 
-def create_beautiful_excel_output(df, output_path, excel_fields):
+def create_beautiful_excel_output(df, output_path, excel_fields, actual_company_count=None):
     """Erstellt eine wunderschön formatierte Excel-Datei mit professionellem Design"""
     print("🎨 ERSTELLE SCHÖNES EXCEL-DESIGN...")
 
@@ -837,7 +858,11 @@ def create_beautiful_excel_output(df, output_path, excel_fields):
     # 8️⃣ METADATA AM ENDE HINZUFÜGEN
     last_row = len(df) + 3
     metadata_cell = ws.cell(row=last_row, column=1)
-    metadata_cell.value = f"📅 Generated: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')} | 📊 Companies: {len(df)} | 🔍 Analysis Type: {'Focus Group' if 'Focus' in df.columns else 'Sub-Industry'}"
+
+    # KORRIGIERT: Verwende die tatsächliche Anzahl der Unternehmen (ohne Durchschnitte)
+    company_count = actual_company_count if actual_company_count is not None else len(df)
+
+    metadata_cell.value = f"📅 Generated: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')} | 📊 Companies: {company_count} | 🔍 Analysis Type: {'Focus Group' if 'Focus' in df.columns else 'Sub-Industry'}"
     metadata_cell.font = Font(name="Calibri", size=9, italic=True, color="666666")
     metadata_cell.alignment = left_alignment
 
