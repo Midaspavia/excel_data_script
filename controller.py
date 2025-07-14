@@ -205,6 +205,9 @@ def process_companies():
                 sector_averages = get_consumer_discretionary_sector_average(refinitiv_fields)
 
                 if sector_averages:
+                    print(f"   🔍 DEBUG: Verfügbare Spalten: {list(df_output_with_averages.columns)}")
+                    print(f"   🔍 DEBUG: Berechnete Durchschnitte: {list(sector_averages.keys())}")
+
                     # Füge Sector-Durchschnitt als neue Zeile hinzu
                     sector_avg_row = {
                         'Name': '🏭 Ø Consumer Discretionary Sector',
@@ -214,26 +217,65 @@ def process_companies():
                         'Input_Source': 'Durchschnitt (GICS Sector 25)'
                     }
 
+                    # Füge alle bestehenden Spalten mit leeren Werten hinzu
+                    for col in df_output_with_averages.columns:
+                        if col not in sector_avg_row:
+                            sector_avg_row[col] = None
+
                     # Füge Refinitiv-Kennzahlen-Durchschnitte hinzu
                     for field, avg_value in sector_averages.items():
-                        # Verwende den ursprünglichen Feldnamen (ohne TR.)
-                        clean_field = field.replace('TR.', '') if field.startswith('TR.') else field
+                        # Erstelle eine Liste möglicher Spaltennamen
+                        possible_column_names = [
+                            field,  # Original: "EBIT"
+                            field.replace('TR.', ''),  # Ohne TR.: "EBIT"
+                            field.upper(),  # Großbuchstaben: "EBIT"
+                            field.lower(),  # Kleinbuchstaben: "ebit"
+                        ]
 
-                        # Suche nach dem tatsächlichen Spaltennamen im DataFrame
-                        matching_cols = [col for col in df_output_with_averages.columns if clean_field.lower() in col.lower() or col.lower() in clean_field.lower()]
+                        # Wenn es ein TR.-Feld ist, füge auch TR.-Varianten hinzu
+                        if field.startswith('TR.'):
+                            clean_field = field.replace('TR.', '')
+                            possible_column_names.extend([
+                                clean_field,
+                                clean_field.upper(),
+                                clean_field.lower()
+                            ])
 
-                        if matching_cols:
-                            sector_avg_row[matching_cols[0]] = avg_value
-                            print(f"   📈 {matching_cols[0]}: {avg_value:.4f} (Sector-Durchschnitt)")
+                        found_column = None
+
+                        # Suche nach exakter Übereinstimmung
+                        for possible_name in possible_column_names:
+                            if possible_name in df_output_with_averages.columns:
+                                found_column = possible_name
+                                print(f"   🎯 EXAKT gefunden: {field} → {possible_name}")
+                                break
+
+                        # Wenn nicht gefunden, suche nach Teilstring-Übereinstimmungen
+                        if not found_column:
+                            for col in df_output_with_averages.columns:
+                                for possible_name in possible_column_names:
+                                    if (possible_name.lower() in col.lower() or
+                                        col.lower() in possible_name.lower()):
+                                        found_column = col
+                                        print(f"   🎯 TEILSTRING gefunden: {field} → {col}")
+                                        break
+                                if found_column:
+                                    break
+
+                        if found_column:
+                            sector_avg_row[found_column] = avg_value
+                            print(f"   📈 {found_column}: {avg_value:,.4f} (Sector-Durchschnitt)")
                         else:
-                            # Fallback: Verwende den bereinigten Feldnamen
+                            # Fallback: Erstelle neue Spalte
+                            clean_field = field.replace('TR.', '') if field.startswith('TR.') else field
                             sector_avg_row[clean_field] = avg_value
-                            print(f"   📈 {clean_field}: {avg_value:.4f} (Sector-Durchschnitt)")
+                            print(f"   ⚠️  NEUE SPALTE: {clean_field}: {avg_value:,.4f} (Sector-Durchschnitt)")
 
                     # Füge Sector-Durchschnitts-Zeile zum DataFrame hinzu
                     df_output_with_averages = pd.concat([df_output_with_averages, pd.DataFrame([sector_avg_row])], ignore_index=True)
                     print(f"   ✅ Consumer Discretionary Sector-Durchschnitt hinzugefügt")
 
+                    print(f"   🔍 DEBUG: Finale Spalten: {list(df_output_with_averages.columns)}")
             # Erstelle schön formatierte Excel-Datei
             all_refinitiv_fields = []
             if refinitiv_fields:
@@ -289,6 +331,23 @@ def process_companies():
                         print(f"   [Refinitiv] {field} (als '{display_key}'): {found_value}")
                     else:
                         print(f"   [Refinitiv] {field}: ❌ Nicht gefunden")
+
+            # Zeige Consumer Discretionary Sector-Durchschnitte für Refinitiv-Kennzahlen
+            if refinitiv_fields and sector_averages:
+                print(f"\n🏭 CONSUMER DISCRETIONARY SECTOR-DURCHSCHNITTE (REFINITIV):")
+                for field, avg_value in sector_averages.items():
+                    # Finde den ursprünglichen Feldnamen
+                    original_field = None
+                    for ref_field in refinitiv_fields:
+                        clean_ref = ref_field.replace('TR.', '') if ref_field.startswith('TR.') else ref_field
+                        if field == clean_ref or field.lower() == clean_ref.lower():
+                            original_field = ref_field
+                            break
+
+                    if original_field:
+                        print(f"   📈 {original_field}: {avg_value:,.4f} (Sektor-Durchschnitt GICS 25)")
+                    else:
+                        print(f"   📈 {field}: {avg_value:,.4f} (Sektor-Durchschnitt GICS 25)")
 
         return all_results
 
