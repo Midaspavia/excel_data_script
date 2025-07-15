@@ -345,8 +345,7 @@ def process_companies():
                     if key not in ['Name', 'RIC', 'Sub-Industry', 'Focus', 'Input_Source'] and key not in excel_fields:
                         # Prüft, ob es ein potentielles Refinitiv-Feld ist
                         if (key.startswith('TR.') or
-                            any(key.upper() == ref_field.replace('TR.', '').upper() for ref_field in refinitiv_fields) or
-                            key.upper() in ['EBIT', 'EBITDA', 'TOTALRETURN', 'TOTALASSETS']):  # Häufige Refinitiv-Felder
+                            any(key.upper() == ref_field.replace('TR.', '').upper() for ref_field in refinitiv_fields)):
                             if key not in actual_refinitiv_columns:
                                 actual_refinitiv_columns.append(key)
 
@@ -364,7 +363,7 @@ def process_companies():
                         found_value = result[field]
                         found_key = field
                     else:
-                        # Erweiterte Suche für ursprünglich angeforderte Felder
+                        # Erweiterte Suche für ursprünglich angeforderten Felder
                         cleaned_field = field.replace("TR.", "") if field.startswith("TR.") else field
                         if cleaned_field in result:
                             found_value = result[cleaned_field]
@@ -962,12 +961,27 @@ def calculate_excel_averages(df, excel_fields):
     focus_values = df_numeric['Focus'].dropna()
     focus_values = focus_values[focus_values != '']
 
+    # KORRIGIERT: Filtere auch "nan" und "None" Strings heraus
+    focus_values = focus_values[focus_values.astype(str).str.lower() != 'nan']
+    focus_values = focus_values[focus_values.astype(str).str.lower() != 'none']
+
     if len(focus_values) > 0:
         print("   🎯 Berechne Focus-Gruppen Durchschnitte...")
-        focus_groups = df_numeric[df_numeric['Focus'] != ''].groupby('Focus')
+
+        # KORRIGIERT: Filtere DataFrame vor Gruppierung
+        valid_focus_df = df_numeric[
+            (df_numeric['Focus'] != '') &
+            (df_numeric['Focus'].notna()) &
+            (df_numeric['Focus'].astype(str).str.lower() != 'nan') &
+            (df_numeric['Focus'].astype(str).str.lower() != 'none')
+        ]
+
+        focus_groups = valid_focus_df.groupby('Focus')
 
         for focus, group in focus_groups:
             if len(group) > 1:  # Nur wenn mehr als 1 Unternehmen
+                print(f"     🎯 Focus-Gruppe '{focus}': {len(group)} Unternehmen")
+
                 avg_row = {
                     'Name': f'🎯 Ø {focus}',
                     'RIC': f'AVG_FOC_{len(group)}',
