@@ -221,7 +221,7 @@ def process_companies():
                     # Füge Sector-Durchschnitt als neue Zeile hinzu
                     sector_avg_row = {
                         'Name': '🏭 Ø Consumer Discretionary Sector',
-                        'RIC': f'AVG_GICS25_{len(sector_averages)}',
+                        'RIC': '',
                         'Sub-Industry': '',
                         'Focus': '',
                         'Input_Source': 'Durchschnitt (GICS Sector 25)'
@@ -939,7 +939,7 @@ def calculate_excel_averages(df, excel_fields):
                     # Berechne Durchschnitte
                     avg_row = {
                         'Name': f'💼 Ø {sub_industry}',
-                        'RIC': f'Branche-Ø ({len(df_sub_industry)} Unternehmen)',
+                        'RIC': '',
                         'Sub-Industry': sub_industry,
                         'Focus': '',
                         'Input_Source': 'Durchschnitt (Branche)'
@@ -984,7 +984,7 @@ def calculate_excel_averages(df, excel_fields):
 
                 avg_row = {
                     'Name': f'🎯 Ø {focus}',
-                    'RIC': f'AVG_FOC_{len(group)}',
+                    'RIC': '',
                     'Sub-Industry': '',
                     'Focus': focus,
                     'Input_Source': 'Durchschnitt'
