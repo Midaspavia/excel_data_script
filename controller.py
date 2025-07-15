@@ -861,7 +861,7 @@ def create_beautiful_excel_output(df, output_path, excel_fields, actual_company_
     # KORRIGIERT: Verwende die tatsächliche Anzahl der Unternehmen (ohne Durchschnitte)
     company_count = actual_company_count if actual_company_count is not None else len(df)
 
-    metadata_cell.value = f"📅 Generated: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')} | 📊 Companies: {company_count} | 🔍 Analysis Type: {'Focus Group' if 'Focus' in df.columns else 'Sub-Industry'}"
+    metadata_cell.value = f"📅 Generated: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')} | 📊 Companies: {company_count}"
     metadata_cell.font = Font(name="Calibri", size=9, italic=True, color="666666")
     metadata_cell.alignment = left_alignment
 
