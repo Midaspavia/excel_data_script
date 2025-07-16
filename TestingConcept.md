@@ -53,6 +53,19 @@
 | 1.4.4 | Mix aus Sub-Industry und Focus Filterung | Zeile 1: Sub-Industry="X", Zeile 2: Focus="X" | Jedes Unternehmen nach seinem Filter-Kriterium | ✅ |
 | 1.4.5 | Doppelte Unternehmen im Input | "RL.N" in Zeile 1 & 2 | Duplikaterkennung, nur einmal verarbeiten | ✅ |
 
+### 1.5 Vorjahresdaten (Period Parameter)
+
+| ID | Äquivalenzklasse | Beispielwerte | Erwartetes Verhalten | Status |
+|----|-----------------|--------------|---------------------|--------|
+| 1.5.1 | Aktuelles Jahr (Standard) | "TR.EBIT", "TR.Revenue" | Aktuelle Daten ohne Period-Parameter | ⏳ |
+| 1.5.2 | Vorjahr (FY-1) | "TR.EBIT(Period=FY-1)", "TR.Revenue(Period=FY-1)" | Daten vom Vorjahr, Spaltenname mit Period-Zusatz | ⏳ |
+| 1.5.3 | Vorletztes Jahr (FY-2) | "TR.EBIT(Period=FY-2)", "TR.Revenue(Period=FY-2)" | Daten von vor 2 Jahren, Spaltenname mit Period-Zusatz | ⏳ |
+| 1.5.4 | Mehrere Jahre derselben Kennzahl | "TR.EBIT", "TR.EBIT(Period=FY-1)", "TR.EBIT(Period=FY-2)" | Separate Spalten für jedes Jahr derselben Kennzahl | ⏳ |
+| 1.5.5 | Ungültiger Period-Parameter | "TR.EBIT(Period=FY-10)", "TR.Revenue(Period=XYZ)" | Fehlermeldung oder Fallback auf aktuelle Daten | ⏳ |
+| 1.5.6 | Gemischte Period-Parameter | "TR.EBIT(Period=FY-1)", "TR.Revenue", "TR.EBITDA(Period=FY-2)" | Korrekte Verarbeitung verschiedener Zeiträume | ⏳ |
+| 1.5.7 | Quartalsweise Daten | "TR.EBIT(Period=Q1)", "TR.Revenue(Period=Q4-1)" | Quartalsdaten falls verfügbar | ⏳ |
+| 1.5.8 | Fehlerhafte Syntax | "TR.EBIT(Period FY-1)", "TR.EBIT[Period=FY-1]" | Robuste Parsierung oder Fehlermeldung | ⏳ |
+
 ## 2. Grenzfälle und spezielle Szenarien
 
 | ID | Szenario | Testfall | Erwartetes Verhalten | Status |
@@ -127,28 +140,33 @@
 - **Test T**: Sequenzielle vs. parallele Verarbeitung
 - **Test U**: Ratenlimit-Verhalten bei großen Anfragen
 
-## 4. Leistungstests
+## 4. Vorjahresdaten-Kombinationen
+
+| ID | Szenario | Kombination | Erwartetes Verhalten | Status |
+|----|----------|------------|---------------------|--------|
+| 4.1 | Zeitreihenanalyse einer Kennzahl | "TR.EBIT", "TR.EBIT(Period=FY-1)", "TR.EBIT(Period=FY-2)" | 3 separate Spalten für EBIT über 3 Jahre | ✅ Funktioniert bei korrekter Eingabe - MP |
+| 4.2 | Verschiedene Kennzahlen, verschiedene Jahre | "TR.EBIT(Period=FY-1)", "TR.Revenue(Period=FY-2)" | Korrekte Zuordnung verschiedener Kennzahlen zu Jahren | ✅ Korrigiert und funktioniert nun - MP |
+| 4.3 | Mix aus aktuellen und historischen Daten | "TR.EBIT", "TR.Revenue(Period=FY-1)", "ISIN" | Aktuelle + historische Refinitiv-Daten + Excel-Kennzahlen | ✅ |
+| 4.4 | Mehrere Unternehmen mit Vorjahresdaten | 3 Unternehmen + "TR.EBIT(Period=FY-1)" | Vorjahresdaten für alle gefilterten Unternehmen | ✅ |
+| 4.5 | Durchschnittswerte bei Vorjahresdaten | "TR.EBIT(Period=FY-1)" mit Focus-Filter | Durchschnittswerte basierend auf Vorjahresdaten | ✅ |
+| 4.6 | Fehlende Vorjahresdaten | "TR.EBIT(Period=FY-1)" für neues Unternehmen | Robuste Behandlung fehlender historischer Daten | ✅ |
+| 4.7 | Große Zeitreihen | 5 Jahre derselben Kennzahl für mehrere Unternehmen | Performance-Test mit vielen Period-Parametern | ✅ |
+
+## 5. Vorjahresdaten-Spezialfälle
 
 | ID | Testfall | Beschreibung | Akzeptanzkriterien | Status |
 |----|----------|-------------|-------------------|--------|
-| 4.1 | Viele Kennzahlen | 20+ Kennzahlen pro Unternehmen | Verarbeitung < 5 Min. | ⏳ |
-| 4.2 | Viele Unternehmen | 100+ Unternehmen in Ergebnis | Verarbeitung < 5 Min. | ⏳ |
-| 4.3 | Große Excel-Dateien | Excel-Dateien > 10 MB | Robuste Verarbeitung | ⏳ |
-| 4.4 | Mehrere Unternehmen mit vielen Kennzahlen | 5 Unternehmen, je 10 Kennzahlen | Verarbeitung < 3 Min. | ⏳ |
+| 5.1 | Spaltenname-Generierung | "TR.EBIT(Period=FY-1)" | Spaltenname wird zu "EBIT(Period=FY-1)" | ✅ |
+| 5.2 | Doppelte Period-Parameter | "TR.EBIT(Period=FY-1)" zweimal eingegeben | Duplikaterkennung funktioniert | ✅ |
+| 5.3 | Unvollständige Daten | Unternehmen hat keine Daten für FY-1 | "N/A" oder leerer Wert, kein Absturz | ✅ |
+| 5.4 | Excel vs. Terminal Konsistenz | Vorjahresdaten in beiden Ausgaben | Identische Werte in Excel und Terminal | ✅ |
+| 5.5 | Durchschnittswerte-Berechnung | Vorjahresdaten in Durchschnittswerten | Korrekte Berechnung der Sektordurchschnitte | ✅ |
+| 5.6 | Große Unternehmen-Anzahl | 50+ Unternehmen mit Vorjahresdaten | Alle Unternehmen haben Vorjahresdaten | ✅ |
+| 5.7 | API-Belastung | Viele Period-Parameter gleichzeitig | Effiziente API-Nutzung, keine Timeouts | ✅ |
 
-## 5. Regressionstests
+## 8. Testdaten
 
-| ID | Testfall | Was geprüft wird | Status |
-|----|----------|-----------------|--------|
-| 5.1 | Standard-Fall: Hermes + ISIN | Basis-Funktionalität | ⏳ |
-| 5.2 | Ralph Lauren RIC + 3 Kennzahlen | Multi-Kennzahlen Verarbeitung | ⏳ |
-| 5.3 | 3 Unternehmen + Sub-Industry Filter | Multiple Eingabe mit Sub-Industry | ⏳ |
-| 5.4 | 3 Unternehmen + Focus Filter | Multiple Eingabe mit Focus | ⏳ |
-| 5.5 | Kennzahlen aus Refinitiv | Refinitiv-Integration | ⏳ |
-
-## 6. Testdaten
-
-### 6.1 Unternehmen für Tests
+### 8.1 Unternehmen für Tests
 - Hermes International SCA (HRMS.PA) - Luxury Goods
 - Ralph Lauren Corp (RL.N) - Luxury Goods
 - Nike Inc (NKE.N) - Footwear
@@ -156,11 +174,53 @@
 - LVMH (LVMH.PA) - Luxury Goods
 - Brunello Cucinelli (BCU.MI) - Luxury Goods (High Focus)
 
-### 6.2 Kennzahlen für Tests
+### 8.2 Kennzahlen für Tests
 - Excel: "ISIN", "P/E", "Free Float", "Market in USD", "Forward P/E"
 - Refinitiv: "TR.Revenue", "TR.PriceClose", "TR.TotalReturn"
 
-## 7. Testprotokoll
+### 8.3 Vorjahresdaten-Testszenarien
+
+#### 8.3.1 Einzelne Kennzahl über mehrere Jahre
+```
+Input: 
+- RIC: RL.N
+- Kennzahlen: TR.EBIT, TR.EBIT(Period=FY-1), TR.EBIT(Period=FY-2)
+- Filter: Sub-Industry
+```
+
+#### 8.3.2 Verschiedene Kennzahlen mit Period-Parametern
+```
+Input:
+- RIC: HRMS.PA
+- Kennzahlen: TR.Revenue(Period=FY-1), TR.EBITDA(Period=FY-2), TR.TotalAssets
+- Filter: Focus
+```
+
+#### 8.3.3 Mehrere Unternehmen mit Vorjahresdaten
+```
+Input:
+- Unternehmen: Hermes, Ralph Lauren, Nike
+- Kennzahlen: ISIN, TR.EBIT(Period=FY-1), TR.Revenue(Period=FY-2)
+- Filter: Sub-Industry
+```
+
+#### 8.3.4 Zeitreihenanalyse
+```
+Input:
+- RIC: NKE.N
+- Kennzahlen: TR.Revenue, TR.Revenue(Period=FY-1), TR.Revenue(Period=FY-2), TR.Revenue(Period=FY-3)
+- Filter: Sub-Industry
+```
+
+#### 8.3.5 Gemischte Datenquellen mit Vorjahresdaten
+```
+Input:
+- Unternehmen: LVMH, Brunello Cucinelli
+- Kennzahlen: ISIN, P/E, TR.EBIT(Period=FY-1), TR.TotalReturn(Period=FY-2)
+- Filter: Focus
+```
+
+## 9. Testprotokoll
 
 | Datum | Testfall-ID | Getestet von | Ergebnis | Kommentar |
 |-------|------------|--------------|----------|------------|
