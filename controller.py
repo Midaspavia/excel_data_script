@@ -10,6 +10,15 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 
 DATA_DIR = "excel_data/data"
 
+def clean_refinitiv_field_name(field_name):
+    """
+    Entfernt TR. aus Refinitiv-Feldnamen, behält aber Period-Information bei
+    Beispiel: TR.EBIT(Period=FY-1) → EBIT(Period=FY-1)
+    """
+    if field_name.startswith('TR.'):
+        return field_name.replace('TR.', '')
+    return field_name
+
 def cleanup_temp_files():
     """Bereinigt temporäre Excel-Dateien (~$*.xlsx) nach der Ausführung"""
     print("🧹 BEREINIGE TEMPORÄRE DATEIEN...")
@@ -244,7 +253,7 @@ def process_companies():
 
                         # Wenn es ein TR.-Feld ist, füge auch TR.-Varianten hinzu
                         if field.startswith('TR.'):
-                            clean_field = field.replace('TR.', '')
+                            clean_field = clean_refinitiv_field_name(field)
                             possible_column_names.extend([
                                 clean_field,
                                 clean_field.upper(),
@@ -299,7 +308,7 @@ def process_companies():
             # Füge Refinitiv-Kennzahlen hinzu (mit und ohne TR. Präfix)
             for ref_field in refinitiv_fields:
                 allowed_columns.append(ref_field)  # Original (z.B. TR.EBIT)
-                clean_field = ref_field.replace('TR.', '') if ref_field.startswith('TR.') else ref_field
+                clean_field = clean_refinitiv_field_name(ref_field)
                 allowed_columns.append(clean_field)  # Ohne TR. (z.B. EBIT)
 
             # Filtere DataFrame auf nur erlaubte Spalten

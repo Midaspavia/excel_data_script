@@ -5,15 +5,29 @@ import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 def resolve_field_name(field_expression):
-    """Liefert den tatsächlichen Spaltennamen zu einem Refinitiv-Feldausdruck"""
+    """Liefert den tatsächlichen Spaltennamen zu einem Refinitiv-Feldausdruck mit Period-Information"""
     try:
         sample = rd.get_data(universe="IBM.N", fields=[field_expression])
         if not sample.empty:
-            return sample.columns[-1]
+            original_col_name = sample.columns[-1]
+
+            # Extrahiere Period-Information aus dem ursprünglichen Feldausdruck
+            if "(Period=" in field_expression:
+                # Extrahiere TR.EBIT(Period=FY-1) → EBIT(Period=FY-1)
+                base_field = field_expression.replace("TR.", "")
+                return base_field
+            else:
+                # Ohne Period-Information: TR.EBIT → EBIT
+                return original_col_name
+
     except Exception as e:
         print(f"⚠️ Feldauflösung fehlgeschlagen für '{field_expression}': {e}")
         pass
-    return field_expression  # Fallback
+
+    # Fallback: Entferne nur TR. aber behalte Period-Information
+    if field_expression.startswith('TR.'):
+        return field_expression.replace('TR.', '')
+    return field_expression
 
 def fetch_refinitiv_data(ric_list, field_expressions):
     """Hole Refinitiv-Daten für mehrere RICs und Felder"""
@@ -45,12 +59,21 @@ def fetch_refinitiv_data(ric_list, field_expressions):
                 data.rename(columns={"Instrument": "RIC"}, inplace=True)
                 data['RIC'] = data['RIC'].str.upper()
 
-                # Speichere Daten
-                if resolved_col_name in data.columns:
-                    results[resolved_col_name] = data.set_index('RIC')[resolved_col_name].to_dict()
-                    print(f"✅ {resolved_col_name}: {len(data)} Datensätze erhalten")
+                # DEBUG: Zeige die tatsächlichen Refinitiv-Daten
+                print(f"🔍 DEBUG: Refinitiv-Daten für {field_expr}:")
+                print(f"   Spalten: {list(data.columns)}")
+                print(f"   Erste 3 Zeilen: {data.head(3).to_dict('records')}")
+
+                # Speichere Daten - verwende den tatsächlichen Spaltennamen aus der API
+                data_columns = [col for col in data.columns if col not in ['RIC', 'index']]
+                if data_columns:
+                    actual_col_name = data_columns[0]  # Nimm die erste Nicht-RIC/Nicht-Index-Spalte
+                    ric_data = data.set_index('RIC')[actual_col_name].to_dict()
+                    results[resolved_col_name] = ric_data
+                    print(f"✅ {resolved_col_name}: {len(data)} Datensätze erhalten (API-Spalte: {actual_col_name})")
+                    print(f"   Beispiel-Werte: {dict(list(ric_data.items())[:3])}")
                 else:
-                    print(f"❌ Spalte '{resolved_col_name}' nicht in Daten gefunden")
+                    print(f"❌ Keine Datenspalten gefunden für '{field_expr}'")
 
         except Exception as e:
             print(f"❌ Fehler beim Abrufen von '{field_expr}': {e}")
