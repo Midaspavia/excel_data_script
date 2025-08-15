@@ -1,15 +1,12 @@
 import os
 import pandas as pd
 from excel_kennzahlen import fetch_excel_kennzahlen_by_ric
-from refinitiv_integration import (
-    get_refinitiv_kennzahlen_for_companies,
-    detect_sector_from_excel_files,
-    get_sector_average,
-    get_gics_sector_mapping
-)
+from refinitiv_integration import get_refinitiv_kennzahlen_for_companies
 import glob
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.formatting.rule import ColorScaleRule
+from openpyxl.utils.dataframe import dataframe_to_rows
 
 DATA_DIR = "excel_data/data"
 
@@ -220,93 +217,84 @@ def process_companies():
             print("\n🔢 BERECHNE DURCHSCHNITTE FÜR EXCEL-KENNZAHLEN...")
             df_output_with_averages = calculate_excel_averages(df_output, excel_fields)
 
-            # 🏭 DYNAMISCHE SEKTOR-ERKENNUNG UND DURCHSCHNITTSBERECHNUNG FÜR REFINITIV-KENNZAHLEN
+            # 🏭 BERECHNE CONSUMER DISCRETIONARY SECTOR DURCHSCHNITTE FÜR REFINITIV-KENNZAHLEN
             if refinitiv_fields:
-                print("\n🎯 DYNAMISCHE SEKTOR-ERKENNUNG...")
+                print("\n🏭 BERECHNE CONSUMER DISCRETIONARY SECTOR DURCHSCHNITTE...")
+                from refinitiv_integration import get_consumer_discretionary_sector_average
+                sector_averages = get_consumer_discretionary_sector_average(refinitiv_fields)
 
-                # 1. Erkenne Sektoren aus verarbeiteten Unternehmen
-                detected_sectors = detect_sectors_from_companies(all_results)
+                if sector_averages:
+                    print(f"   🔍 DEBUG: Verfügbare Spalten: {list(df_output_with_averages.columns)}")
+                    print(f"   🔍 DEBUG: Berechnete Durchschnitte: {list(sector_averages.keys())}")
 
-                # 2. Berechne Durchschnitte für jeden erkannten Sektor
-                for sector_code, sector_name in detected_sectors:
-                    print(f"\n🏭 BERECHNE {sector_name.upper()} SECTOR DURCHSCHNITTE (Code: {sector_code})...")
-                    sector_averages = get_sector_average(sector_code, sector_name, refinitiv_fields)
+                    # Füge Sector-Durchschnitt als neue Zeile hinzu
+                    sector_avg_row = {
+                        'Name': '🏭 Ø Consumer Discretionary Sector',
+                        'RIC': '',
+                        'Sub-Industry': '',
+                        'Focus': '',
+                        'Input_Source': 'Durchschnitt (GICS Sector 25)'
+                    }
 
-                    if sector_averages:
-                        print(f"   🔍 DEBUG: Verfügbare Spalten: {list(df_output_with_averages.columns)}")
-                        print(f"   🔍 DEBUG: Berechnete Durchschnitte: {list(sector_averages.keys())}")
+                    # Füge alle bestehenden Spalten mit leeren Werten hinzu
+                    for col in df_output_with_averages.columns:
+                        if col not in sector_avg_row:
+                            sector_avg_row[col] = None
 
-                        # Füge Sector-Durchschnitt als neue Zeile hinzu
-                        sector_avg_row = {
-                            'Name': f'🏭 Ø {sector_name} Sector',
-                            'RIC': '',
-                            'Sub-Industry': '',
-                            'Focus': '',
-                            'Input_Source': f'Durchschnitt (GICS Sector {sector_code})'
-                        }
+                    # Füge Refinitiv-Kennzahlen-Durchschnitte hinzu
+                    for field, avg_value in sector_averages.items():
+                        # Erstelle eine Liste möglicher Spaltennamen
+                        possible_column_names = [
+                            field,  # Original: "EBIT"
+                            field.replace('TR.', ''),  # Ohne TR.: "EBIT"
+                            field.upper(),  # Großbuchstaben: "EBIT"
+                            field.lower(),  # Kleinbuchstaben: "ebit"
+                        ]
 
-                        # Füge alle bestehenden Spalten mit leeren Werten hinzu
-                        for col in df_output_with_averages.columns:
-                            if col not in sector_avg_row:
-                                sector_avg_row[col] = None
+                        # Wenn es ein TR.-Feld ist, füge auch TR.-Varianten hinzu
+                        if field.startswith('TR.'):
+                            clean_field = clean_refinitiv_field_name(field)
+                            possible_column_names.extend([
+                                clean_field,
+                                clean_field.upper(),
+                                clean_field.lower()
+                            ])
 
-                        # Füge Refinitiv-Kennzahlen-Durchschnitte hinzu
-                        for field, avg_value in sector_averages.items():
-                            # Erstelle eine Liste möglicher Spaltennamen
-                            possible_column_names = [
-                                field,  # Original: "EBIT"
-                                field.replace('TR.', ''),  # Ohne TR.: "EBIT"
-                                field.upper(),  # Großbuchstaben: "EBIT"
-                                field.lower(),  # Kleinbuchstaben: "ebit"
-                            ]
+                        found_column = None
 
-                            # Wenn es ein TR.-Feld ist, füge auch TR.-Varianten hinzu
-                            if field.startswith('TR.'):
-                                clean_field = clean_refinitiv_field_name(field)
-                                possible_column_names.extend([
-                                    clean_field,
-                                    clean_field.upper(),
-                                    clean_field.lower()
-                                ])
+                        # Suche nach exakter Übereinstimmung
+                        for possible_name in possible_column_names:
+                            if possible_name in df_output_with_averages.columns:
+                                found_column = possible_name
+                                print(f"   🎯 EXAKT gefunden: {field} → {possible_name}")
+                                break
 
-                            found_column = None
-
-                            # Suche nach exakter Übereinstimmung
-                            for possible_name in possible_column_names:
-                                if possible_name in df_output_with_averages.columns:
-                                    found_column = possible_name
-                                    print(f"   🎯 EXAKT gefunden: {field} → {possible_name}")
+                        # Wenn nicht gefunden, suche nach Teilstring-Übereinstimmungen
+                        if not found_column:
+                            for col in df_output_with_averages.columns:
+                                for possible_name in possible_column_names:
+                                    if (possible_name.lower() in col.lower() or
+                                        col.lower() in possible_name.lower()):
+                                        found_column = col
+                                        print(f"   🎯 TEILSTRING gefunden: {field} → {col}")
+                                        break
+                                if found_column:
                                     break
 
-                            # Wenn nicht gefunden, suche nach Teilstring-Übereinstimmungen
-                            if not found_column:
-                                for col in df_output_with_averages.columns:
-                                    for possible_name in possible_column_names:
-                                        if (possible_name.lower() in col.lower() or
-                                            col.lower() in possible_name.lower()):
-                                            found_column = col
-                                            print(f"   🎯 TEILSTRING gefunden: {field} → {col}")
-                                            break
-                                    if found_column:
-                                        break
+                        if found_column:
+                            sector_avg_row[found_column] = avg_value
+                            print(f"   📈 {found_column}: {avg_value:,.4f} (Sector-Durchschnitt)")
+                        else:
+                            # Fallback: Erstelle neue Spalte
+                            clean_field = field.replace('TR.', '') if field.startswith('TR.') else field
+                            sector_avg_row[clean_field] = avg_value
+                            print(f"   ⚠️  NEUE SPALTE: {clean_field}: {avg_value:,.4f} (Sector-Durchschnitt)")
 
-                            if found_column:
-                                sector_avg_row[found_column] = avg_value
-                                print(f"   📈 {found_column}: {avg_value:,.4f} (Sector-Durchschnitt)")
-                            else:
-                                # Fallback: Erstelle neue Spalte
-                                clean_field = field.replace('TR.', '') if field.startswith('TR.') else field
-                                sector_avg_row[clean_field] = avg_value
-                                print(f"   ⚠️  NEUE SPALTE: {clean_field}: {avg_value:,.4f} (Sector-Durchschnitt)")
+                    # Füge Sector-Durchschnitts-Zeile zum DataFrame hinzu
+                    df_output_with_averages = pd.concat([df_output_with_averages, pd.DataFrame([sector_avg_row])], ignore_index=True)
+                    print(f"   ✅ Consumer Discretionary Sector-Durchschnitt hinzugefügt")
 
-                        # Füge Sector-Durchschnitts-Zeile zum DataFrame hinzu
-                        df_output_with_averages = pd.concat([df_output_with_averages, pd.DataFrame([sector_avg_row])], ignore_index=True)
-                        print(f"   ✅ {sector_name} Sector-Durchschnitt hinzugefügt")
-
-                        print(f"   🔍 DEBUG: Finale Spalten: {list(df_output_with_averages.columns)}")
-                    else:
-                        print(f"   ⚠️ Keine Durchschnittswerte für {sector_name} erhalten")
-
+                    print(f"   🔍 DEBUG: Finale Spalten: {list(df_output_with_averages.columns)}")
             # KORRIGIERT: Filtere Output-DataFrame, um nur angeforderte Kennzahlen zu behalten
             print(f"\n🔍 FILTERE OUTPUT AUF NUR ANGEFORDERTE KENNZAHLEN...")
 
@@ -413,29 +401,22 @@ def process_companies():
                     else:
                         print(f"   [Refinitiv] {field}: ❌ Nicht gefunden")
 
-            # Zeige dynamische Sektor-Durchschnitte für Refinitiv-Kennzahlen
-            if refinitiv_fields and detected_sectors:
-                print(f"\n🏭 DYNAMISCHE SEKTOR-DURCHSCHNITTE (REFINITIV):")
-                for sector_code, sector_name in detected_sectors:
-                    print(f"\n📊 {sector_name.upper()} SECTOR (GICS {sector_code}):")
-                    # Die Durchschnitte wurden bereits oben berechnet und dem DataFrame hinzugefügt
-                    sector_rows = df_output_cleaned[df_output_cleaned['Input_Source'].str.contains(f'GICS Sector {sector_code}', na=False)]
-                    if not sector_rows.empty:
-                        sector_row = sector_rows.iloc[0]
-                        for ref_field in refinitiv_fields:
-                            # Suche nach dem Wert in der Sector-Zeile
-                            found_value = None
-                            clean_ref = ref_field.replace('TR.', '') if ref_field.startswith('TR.') else ref_field
+            # Zeige Consumer Discretionary Sector-Durchschnitte für Refinitiv-Kennzahlen
+            if refinitiv_fields and sector_averages:
+                print(f"\n🏭 CONSUMER DISCRETIONARY SECTOR-DURCHSCHNITTE (REFINITIV):")
+                for field, avg_value in sector_averages.items():
+                    # Finde den ursprünglichen Feldnamen
+                    original_field = None
+                    for ref_field in refinitiv_fields:
+                        clean_ref = ref_field.replace('TR.', '') if ref_field.startswith('TR.') else ref_field
+                        if field == clean_ref or field.lower() == clean_ref.lower():
+                            original_field = ref_field
+                            break
 
-                            if ref_field in sector_row and pd.notna(sector_row[ref_field]):
-                                found_value = sector_row[ref_field]
-                            elif clean_ref in sector_row and pd.notna(sector_row[clean_ref]):
-                                found_value = sector_row[clean_ref]
-
-                            if found_value:
-                                print(f"   📈 {ref_field}: {found_value:,.4f} (Sektor-Durchschnitt)")
-                            else:
-                                print(f"   ⚠️ {ref_field}: Nicht verfügbar")
+                    if original_field:
+                        print(f"   📈 {original_field}: {avg_value:,.4f} (Sektor-Durchschnitt GICS 25)")
+                    else:
+                        print(f"   📈 {field}: {avg_value:,.4f} (Sektor-Durchschnitt GICS 25)")
 
         return all_results
 
@@ -1035,49 +1016,3 @@ def calculate_excel_averages(df, excel_fields):
 
     print(f"✅ Durchschnittsberechnung abgeschlossen")
     return df
-
-def get_available_excel_files():
-    """Hole alle verfügbaren Excel-Dateien im DATA_DIR"""
-    excel_files = []
-    if os.path.exists(DATA_DIR):
-        excel_files = glob.glob(os.path.join(DATA_DIR, "*.xlsx"))
-    return excel_files
-
-def detect_sectors_from_companies(companies):
-    """Erkenne GICS-Sektoren aus den Unternehmensdaten direkt"""
-    detected_sectors = set()
-    gics_mapping = get_gics_sector_mapping()
-
-    # Sammle alle verfügbaren Excel-Dateien für Fallback-Erkennung
-    excel_files = get_available_excel_files()
-    excel_sectors = detect_sector_from_excel_files(excel_files)
-
-    print(f"🔍 SEKTOR-ERKENNUNG aus {len(companies)} Unternehmen...")
-
-    for company in companies:
-        # Versuche Sektor aus Sub-Industry zu ableiten (vereinfacht)
-        sub_industry = company.get('Sub-Industry', '').lower()
-
-        # Einfache Keyword-basierte Sektor-Zuordnung
-        if any(keyword in sub_industry for keyword in ['retail', 'consumer', 'auto', 'hotel', 'restaurant']):
-            detected_sectors.add(("25", "Consumer Discretionary"))
-        elif any(keyword in sub_industry for keyword in ['health', 'pharma', 'medical', 'biotech']):
-            detected_sectors.add(("35", "Health Care"))
-        elif any(keyword in sub_industry for keyword in ['tech', 'software', 'internet', 'semiconductor']):
-            detected_sectors.add(("45", "Information Technology"))
-        elif any(keyword in sub_industry for keyword in ['bank', 'insurance', 'financial']):
-            detected_sectors.add(("40", "Financials"))
-
-    # Fallback: Nutze Excel-basierte Erkennung wenn keine Sektoren erkannt
-    if not detected_sectors and excel_sectors:
-        print("🔄 Fallback: Nutze Excel-basierte Sektor-Erkennung")
-        detected_sectors.update(excel_sectors)
-
-    # Weitere Fallback: Standard Consumer Discretionary
-    if not detected_sectors:
-        print("⚠️ Keine Sektoren erkannt - Fallback auf Consumer Discretionary")
-        detected_sectors.add(("25", "Consumer Discretionary"))
-
-    result = list(detected_sectors)
-    print(f"✅ Erkannte Sektoren: {[f'{name} ({code})' for code, name in result]}")
-    return result
