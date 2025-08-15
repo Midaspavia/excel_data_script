@@ -187,11 +187,16 @@ def detect_sector_from_excel_files(excel_files):
     """Erkenne GICS-Sektoren aus Excel-Dateinamen"""
     sector_mapping = {
         "consumer": "25",  # Consumer Discretionary
+        "housing": "25",   # Housing gehört zu Consumer Discretionary
+        "basic consumer": "25",  # Basic Consumer gehört zu Consumer Discretionary
         "health": "35",    # Health Care
-        "tech": "45",      # Information Technology
+        "it": "45",        # Information Technology
+        "tech": "45",      # Information Technology (alternative)
         "financial": "40", # Financials
         "energy": "10",    # Energy
-        "materials": "15", # Materials
+        "materials": "15", # Materials (beide Materials-Dateien)
+        "chemicals": "15", # Materials Chemicals
+        "commodities": "15", # Materials Commodities
         "industrial": "20", # Industrials
         "staples": "30",   # Consumer Staples
         "communication": "50", # Communication Services
@@ -204,12 +209,54 @@ def detect_sector_from_excel_files(excel_files):
 
     for file_path in excel_files:
         filename = file_path.lower()
-        for keyword, sector_code in sector_mapping.items():
-            if keyword in filename:
-                sector_name = gics_mapping.get(sector_code, f"Sector {sector_code}")
-                detected_sectors.add((sector_code, sector_name))
-                print(f"🎯 Erkannt aus '{file_path}': {sector_name} (Code: {sector_code})")
-                break
+        sector_found = False
+
+        # Prüfe spezielle Fälle zuerst
+        if "basic consumer" in filename or "basic_consumer" in filename:
+            sector_code = "25"
+            sector_name = gics_mapping.get(sector_code, f"Sector {sector_code}")
+            detected_sectors.add((sector_code, sector_name))
+            print(f"🎯 Erkannt aus '{file_path}': {sector_name} (Code: {sector_code}) - Basic Consumer")
+            sector_found = True
+        elif "housing" in filename:
+            sector_code = "25"
+            sector_name = gics_mapping.get(sector_code, f"Sector {sector_code}")
+            detected_sectors.add((sector_code, sector_name))
+            print(f"🎯 Erkannt aus '{file_path}': {sector_name} (Code: {sector_code}) - Housing")
+            sector_found = True
+        elif "materials" in filename or "chemicals" in filename or "commodities" in filename:
+            sector_code = "15"
+            sector_name = gics_mapping.get(sector_code, f"Sector {sector_code}")
+            detected_sectors.add((sector_code, sector_name))
+            print(f"🎯 Erkannt aus '{file_path}': {sector_name} (Code: {sector_code}) - Materials")
+            sector_found = True
+        elif "health" in filename:
+            sector_code = "35"
+            sector_name = gics_mapping.get(sector_code, f"Sector {sector_code}")
+            detected_sectors.add((sector_code, sector_name))
+            print(f"🎯 Erkannt aus '{file_path}': {sector_name} (Code: {sector_code}) - Health Care")
+            sector_found = True
+        elif "it" in filename or "tech" in filename:
+            sector_code = "45"
+            sector_name = gics_mapping.get(sector_code, f"Sector {sector_code}")
+            detected_sectors.add((sector_code, sector_name))
+            print(f"🎯 Erkannt aus '{file_path}': {sector_name} (Code: {sector_code}) - Technology")
+            sector_found = True
+        elif "utilities" in filename:
+            sector_code = "55"
+            sector_name = gics_mapping.get(sector_code, f"Sector {sector_code}")
+            detected_sectors.add((sector_code, sector_name))
+            print(f"🎯 Erkannt aus '{file_path}': {sector_name} (Code: {sector_code}) - Utilities")
+            sector_found = True
+
+        # Fallback für andere Keywords
+        if not sector_found:
+            for keyword, sector_code in sector_mapping.items():
+                if keyword in filename:
+                    sector_name = gics_mapping.get(sector_code, f"Sector {sector_code}")
+                    detected_sectors.add((sector_code, sector_name))
+                    print(f"🎯 Erkannt aus '{file_path}': {sector_name} (Code: {sector_code})")
+                    break
 
     return list(detected_sectors)
 
