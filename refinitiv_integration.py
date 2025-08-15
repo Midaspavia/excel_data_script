@@ -165,12 +165,60 @@ def get_refinitiv_kennzahlen_for_companies(companies, refinitiv_fields):
         except:
             pass
 
-def get_consumer_discretionary_sector_average(refinitiv_fields):
+# NEUE FUNKTIONEN FÜR DYNAMISCHE SEKTOR-ERKENNUNG
+
+def get_gics_sector_mapping():
+    """Mapping von GICS Sector Codes zu Namen"""
+    return {
+        "10": "Energy",
+        "15": "Materials",
+        "20": "Industrials",
+        "25": "Consumer Discretionary",
+        "30": "Consumer Staples",
+        "35": "Health Care",
+        "40": "Financials",
+        "45": "Information Technology",
+        "50": "Communication Services",
+        "55": "Utilities",
+        "60": "Real Estate"
+    }
+
+def detect_sector_from_excel_files(excel_files):
+    """Erkenne GICS-Sektoren aus Excel-Dateinamen"""
+    sector_mapping = {
+        "consumer": "25",  # Consumer Discretionary
+        "health": "35",    # Health Care
+        "tech": "45",      # Information Technology
+        "financial": "40", # Financials
+        "energy": "10",    # Energy
+        "materials": "15", # Materials
+        "industrial": "20", # Industrials
+        "staples": "30",   # Consumer Staples
+        "communication": "50", # Communication Services
+        "utilities": "55", # Utilities
+        "real_estate": "60" # Real Estate
+    }
+
+    detected_sectors = set()
+    gics_mapping = get_gics_sector_mapping()
+
+    for file_path in excel_files:
+        filename = file_path.lower()
+        for keyword, sector_code in sector_mapping.items():
+            if keyword in filename:
+                sector_name = gics_mapping.get(sector_code, f"Sector {sector_code}")
+                detected_sectors.add((sector_code, sector_name))
+                print(f"🎯 Erkannt aus '{file_path}': {sector_name} (Code: {sector_code})")
+                break
+
+    return list(detected_sectors)
+
+def get_sector_average(sector_code, sector_name, refinitiv_fields):
     """
-    Berechnet den Durchschnitt für ALLE Refinitiv-Kennzahlen über den gesamten
-    GICS Consumer Discretionary Sector (25) mit Ausreißer-Filterung (5% oben/unten)
+    Berechnet den Durchschnitt für ALLE Refinitiv-Kennzahlen über einen spezifischen
+    GICS Sector mit Ausreißer-Filterung (5% oben/unten)
     """
-    print("🏭 BERECHNE CONSUMER DISCRETIONARY SECTOR DURCHSCHNITTE...")
+    print(f"🏭 BERECHNE {sector_name.upper()} SECTOR DURCHSCHNITTE (Code: {sector_code})...")
 
     if not refinitiv_fields:
         print("⚠️ Keine Refinitiv-Kennzahlen angegeben")
@@ -182,8 +230,7 @@ def get_consumer_discretionary_sector_average(refinitiv_fields):
         print("🔄 Öffne Refinitiv-Session für Sector-Analyse...")
         rd.open_session()
 
-        # Verwende vereinfachte Methode für Sector-Screening
-        print("📋 Hole Consumer Discretionary Sektor-Durchschnitte...")
+        print(f"📋 Hole {sector_name} Sektor-Durchschnitte...")
 
         # Berechne für jede Refinitiv-Kennzahl den Sektor-Durchschnitt
         for field_expr in refinitiv_fields:
@@ -197,43 +244,35 @@ def get_consumer_discretionary_sector_average(refinitiv_fields):
             try:
                 print(f"📊 Berechne Sektor-Durchschnitt für: {field_expr}")
 
-                # Hole Daten für Consumer Discretionary Sector
+                # Hole Daten für spezifischen GICS Sector
                 sector_data = rd.get_data(
-                    universe='SCREEN(U(IN(Equity(active,public,primary))/*UNV:Public*/), IN(TR.GICSSectorCode,"25"), CURN=USD)',
+                    universe=f'SCREEN(U(IN(Equity(active,public,primary))/*UNV:Public*/), IN(TR.GICSSectorCode,"{sector_code}"), CURN=USD)',
                     fields=[field_expr]
                 )
 
                 if not sector_data.empty:
-                    # Resolva den echten Spaltennamen
-                    resolved_col_name = resolve_field_name(field_expr)
+                    # Bestimme die relevante Datenspalte
+                    data_columns = [col for col in sector_data.columns if col not in ['Instrument']]
+                    if data_columns:
+                        col = data_columns[0]
+                        values = pd.to_numeric(sector_data[col], errors='coerce').dropna()
 
-                    # Finde die richtige Spalte
-                    data_col = None
-                    for col in sector_data.columns:
-                        if col != 'Instrument':
-                            data_col = col
-                            break
-
-                    if data_col:
-                        # Konvertiere zu numerischen Werten
-                        values = pd.to_numeric(sector_data[data_col], errors='coerce').dropna()
-
-                        if not values.empty and len(values) > 10:  # Mindestens 10 Werte für sinnvollen Durchschnitt
-                            # Entferne Ausreißer (5 % und 95 % Quantile)
+                        if not values.empty and len(values) >= 5:  # Mindestens 5 Datenpunkte
+                            # Entferne Ausreißer (5% und 95% Quantile)
                             lower = values.quantile(0.05)
                             upper = values.quantile(0.95)
                             filtered_values = values[(values >= lower) & (values <= upper)]
 
                             if not filtered_values.empty:
-                                avg = round(filtered_values.mean(), 4)
-                                sector_averages[resolved_col_name] = avg
-                                print(f"   ✅ {resolved_col_name}: {avg:,} (aus {len(filtered_values)} Werten)")
+                                avg = round(filtered_values.mean(), 2)
+                                sector_averages[field_expr] = avg
+                                print(f"   ✅ {field_expr}: {avg:,} (aus {len(filtered_values)}/{len(values)} Werten)")
                             else:
-                                print(f"   ❌ {resolved_col_name}: Keine Werte nach Filterung")
+                                print(f"   ⚠️ {field_expr}: Keine Werte nach Ausreißer-Filterung")
                         else:
-                            print(f"   ❌ {resolved_col_name}: Zu wenig Daten ({len(values)} Werte)")
+                            print(f"   ⚠️ {field_expr}: Zu wenige Datenpunkte ({len(values)})")
                     else:
-                        print(f"   ❌ {field_expr}: Keine Datenspalte gefunden")
+                        print(f"   ❌ {field_expr}: Keine Datenspalten gefunden")
                 else:
                     print(f"   ❌ {field_expr}: Keine Sektor-Daten erhalten")
 
@@ -241,11 +280,11 @@ def get_consumer_discretionary_sector_average(refinitiv_fields):
                 print(f"   ❌ Fehler bei {field_expr}: {e}")
                 continue
 
-        print(f"✅ {len(sector_averages)} Sektor-Durchschnitte berechnet")
+        print(f"✅ {len(sector_averages)}/{len(refinitiv_fields)} Sektor-Durchschnitte berechnet für {sector_name}")
         return sector_averages
 
     except Exception as e:
-        print(f"❌ Fehler bei Sektor-Durchschnittsberechnung: {e}")
+        print(f"❌ Fehler bei Sektor-Durchschnitts-Berechnung: {e}")
         return {}
     finally:
         try:
@@ -253,3 +292,8 @@ def get_consumer_discretionary_sector_average(refinitiv_fields):
             print("✅ Refinitiv-Session geschlossen")
         except:
             pass
+
+# BESTEHENDE FUNKTION FÜR RÜCKWÄRTSKOMPATIBILITÄT
+def get_consumer_discretionary_sector_average(refinitiv_fields):
+    """Legacy-Funktion für Consumer Discretionary - nutzt neue generische Funktion"""
+    return get_sector_average("25", "Consumer Discretionary", refinitiv_fields)
