@@ -184,7 +184,7 @@ def fetch_excel_kennzahlen_by_ric_filtered(ric: str, fields: list, gics_sectors=
                             if search_field in df.columns:
                                 value = matched_row[search_field]
 
-                                # Verbesserte Überprüfung: Stelle sicher, dass der Wert nicht ein RIC-Code ist
+                                # Verbesserte Überprüfung: Stelle sicher, dass der Wert nicht ein RIC-Code oder Fehlermeldung ist
                                 if pd.notna(value) and str(value).strip() != "":
                                     str_value = str(value).strip().upper()
 
@@ -205,11 +205,11 @@ def fetch_excel_kennzahlen_by_ric_filtered(ric: str, fields: list, gics_sectors=
 
                                     if is_error_message:
                                         print(f"⚠️ Fehlermeldung '{value}' erkannt, setze leeren Wert")
-                                        result[field] = ""  # Leerer String statt überspringen
+                                        result[field] = ""  # Leerer String
                                         found = True
                                         break
 
-                                    # Prüfe ob der Wert wie ein RIC aussieht (enthält typische RIC-Muster)
+                                    # Prüfe ob der Wert wie ein RIC aussieht (nur für echte RIC-Codes)
                                     is_ric_like = (
                                         # Exakter Match mit dem gesuchten RIC
                                         str_value == ric.upper().strip() or
@@ -237,7 +237,7 @@ def fetch_excel_kennzahlen_by_ric_filtered(ric: str, fields: list, gics_sectors=
                                     if pd.notna(value) and str(value).strip() != "":
                                         str_value = str(value).strip().upper()
 
-                                        # Prüfe auf Fehlermeldungen ZUERST
+                                        # Prüfe auf Fehlermeldungen
                                         error_messages = [
                                             "THE RECORD COULD NOT BE FOUND",
                                             "ERROR CODE: 0",
@@ -254,10 +254,10 @@ def fetch_excel_kennzahlen_by_ric_filtered(ric: str, fields: list, gics_sectors=
 
                                         if is_error_message:
                                             print(f"⚠️ Fehlermeldung '{value}' erkannt, setze leeren Wert")
-                                            result[field] = ""  # Leerer String statt überspringen
+                                            result[field] = ""  # Leerer String
                                             break
 
-                                        # Gleiche RIC-Überprüfung wie oben
+                                        # RIC-Überprüfung (für echte RIC-Codes)
                                         is_ric_like = (
                                             str_value == ric.upper().strip() or
                                             bool(re.match(r'^[A-Z]{1,6}\.[A-Z]{1,3}$', str_value)) or
@@ -270,7 +270,6 @@ def fetch_excel_kennzahlen_by_ric_filtered(ric: str, fields: list, gics_sectors=
                                             break
                                         else:
                                             print(f"⚠️ Wert '{value}' sieht wie ein RIC aus, überspringe")
-
                     # Wenn Kennzahlen gefunden wurden, breche Sheet-Schleife ab
                     if result:
                         break
