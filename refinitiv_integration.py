@@ -165,107 +165,12 @@ def get_refinitiv_kennzahlen_for_companies(companies, refinitiv_fields):
         except:
             pass
 
-# NEUE FUNKTIONEN FÜR DYNAMISCHE SEKTOR-ERKENNUNG
-
-def get_gics_sector_mapping():
-    """Mapping von GICS Sector Codes zu Namen"""
-    return {
-        "10": "Energy",
-        "15": "Materials",
-        "20": "Industrials",
-        "25": "Consumer Discretionary",
-        "30": "Consumer Staples",
-        "35": "Health Care",
-        "40": "Financials",
-        "45": "Information Technology",
-        "50": "Communication Services",
-        "55": "Utilities",
-        "60": "Real Estate"
-    }
-
-def detect_sector_from_excel_files(excel_files):
-    """Erkenne GICS-Sektoren aus Excel-Dateinamen"""
-    sector_mapping = {
-        "consumer": "25",  # Consumer Discretionary
-        "housing": "25",   # Housing gehört zu Consumer Discretionary
-        "basic consumer": "25",  # Basic Consumer gehört zu Consumer Discretionary
-        "health": "35",    # Health Care
-        "it": "45",        # Information Technology
-        "tech": "45",      # Information Technology (alternative)
-        "financial": "40", # Financials
-        "energy": "10",    # Energy
-        "materials": "15", # Materials (beide Materials-Dateien)
-        "chemicals": "15", # Materials Chemicals
-        "commodities": "15", # Materials Commodities
-        "industrial": "20", # Industrials
-        "staples": "30",   # Consumer Staples
-        "communication": "50", # Communication Services
-        "utilities": "55", # Utilities
-        "real_estate": "60" # Real Estate
-    }
-
-    detected_sectors = set()
-    gics_mapping = get_gics_sector_mapping()
-
-    for file_path in excel_files:
-        filename = file_path.lower()
-        sector_found = False
-
-        # Prüfe spezielle Fälle zuerst
-        if "basic consumer" in filename or "basic_consumer" in filename:
-            sector_code = "25"
-            sector_name = gics_mapping.get(sector_code, f"Sector {sector_code}")
-            detected_sectors.add((sector_code, sector_name))
-            print(f"🎯 Erkannt aus '{file_path}': {sector_name} (Code: {sector_code}) - Basic Consumer")
-            sector_found = True
-        elif "housing" in filename:
-            sector_code = "25"
-            sector_name = gics_mapping.get(sector_code, f"Sector {sector_code}")
-            detected_sectors.add((sector_code, sector_name))
-            print(f"🎯 Erkannt aus '{file_path}': {sector_name} (Code: {sector_code}) - Housing")
-            sector_found = True
-        elif "materials" in filename or "chemicals" in filename or "commodities" in filename:
-            sector_code = "15"
-            sector_name = gics_mapping.get(sector_code, f"Sector {sector_code}")
-            detected_sectors.add((sector_code, sector_name))
-            print(f"🎯 Erkannt aus '{file_path}': {sector_name} (Code: {sector_code}) - Materials")
-            sector_found = True
-        elif "health" in filename:
-            sector_code = "35"
-            sector_name = gics_mapping.get(sector_code, f"Sector {sector_code}")
-            detected_sectors.add((sector_code, sector_name))
-            print(f"🎯 Erkannt aus '{file_path}': {sector_name} (Code: {sector_code}) - Health Care")
-            sector_found = True
-        elif "it" in filename or "tech" in filename:
-            sector_code = "45"
-            sector_name = gics_mapping.get(sector_code, f"Sector {sector_code}")
-            detected_sectors.add((sector_code, sector_name))
-            print(f"🎯 Erkannt aus '{file_path}': {sector_name} (Code: {sector_code}) - Technology")
-            sector_found = True
-        elif "utilities" in filename:
-            sector_code = "55"
-            sector_name = gics_mapping.get(sector_code, f"Sector {sector_code}")
-            detected_sectors.add((sector_code, sector_name))
-            print(f"🎯 Erkannt aus '{file_path}': {sector_name} (Code: {sector_code}) - Utilities")
-            sector_found = True
-
-        # Fallback für andere Keywords
-        if not sector_found:
-            for keyword, sector_code in sector_mapping.items():
-                if keyword in filename:
-                    sector_name = gics_mapping.get(sector_code, f"Sector {sector_code}")
-                    detected_sectors.add((sector_code, sector_name))
-                    print(f"🎯 Erkannt aus '{file_path}': {sector_name} (Code: {sector_code})")
-                    break
-
-    return list(detected_sectors)
-
-def get_sector_average(sector_code, sector_name, refinitiv_fields):
+def get_consumer_discretionary_sector_average(refinitiv_fields):
     """
-    Berechnet den Durchschnitt für ALLE Refinitiv-Kennzahlen über einen spezifischen
-    GICS Sector mit Ausreißer-Filterung (5% oben/unten)
+    Berechnet den Durchschnitt für ALLE Refinitiv-Kennzahlen über den gesamten
+    GICS Consumer Discretionary Sector (25) mit Ausreißer-Filterung (5% oben/unten)
     """
-    print(f"🏭 BERECHNE {sector_name.upper()} SECTOR DURCHSCHNITTE (Code: {sector_code})...")
+    print("🏭 BERECHNE CONSUMER DISCRETIONARY SECTOR DURCHSCHNITTE...")
 
     if not refinitiv_fields:
         print("⚠️ Keine Refinitiv-Kennzahlen angegeben")
@@ -277,7 +182,8 @@ def get_sector_average(sector_code, sector_name, refinitiv_fields):
         print("🔄 Öffne Refinitiv-Session für Sector-Analyse...")
         rd.open_session()
 
-        print(f"📋 Hole {sector_name} Sektor-Durchschnitte...")
+        # Verwende vereinfachte Methode für Sector-Screening
+        print("📋 Hole Consumer Discretionary Sektor-Durchschnitte...")
 
         # Berechne für jede Refinitiv-Kennzahl den Sektor-Durchschnitt
         for field_expr in refinitiv_fields:
@@ -291,35 +197,43 @@ def get_sector_average(sector_code, sector_name, refinitiv_fields):
             try:
                 print(f"📊 Berechne Sektor-Durchschnitt für: {field_expr}")
 
-                # Hole Daten für spezifischen GICS Sector
+                # Hole Daten für Consumer Discretionary Sector
                 sector_data = rd.get_data(
-                    universe=f'SCREEN(U(IN(Equity(active,public,primary))/*UNV:Public*/), IN(TR.GICSSectorCode,"{sector_code}"), CURN=USD)',
+                    universe='SCREEN(U(IN(Equity(active,public,primary))/*UNV:Public*/), IN(TR.GICSSectorCode,"25"), CURN=USD)',
                     fields=[field_expr]
                 )
 
                 if not sector_data.empty:
-                    # Bestimme die relevante Datenspalte
-                    data_columns = [col for col in sector_data.columns if col not in ['Instrument']]
-                    if data_columns:
-                        col = data_columns[0]
-                        values = pd.to_numeric(sector_data[col], errors='coerce').dropna()
+                    # Resolva den echten Spaltennamen
+                    resolved_col_name = resolve_field_name(field_expr)
 
-                        if not values.empty and len(values) >= 5:  # Mindestens 5 Datenpunkte
-                            # Entferne Ausreißer (5% und 95% Quantile)
+                    # Finde die richtige Spalte
+                    data_col = None
+                    for col in sector_data.columns:
+                        if col != 'Instrument':
+                            data_col = col
+                            break
+
+                    if data_col:
+                        # Konvertiere zu numerischen Werten
+                        values = pd.to_numeric(sector_data[data_col], errors='coerce').dropna()
+
+                        if not values.empty and len(values) > 10:  # Mindestens 10 Werte für sinnvollen Durchschnitt
+                            # Entferne Ausreißer (5 % und 95 % Quantile)
                             lower = values.quantile(0.05)
                             upper = values.quantile(0.95)
                             filtered_values = values[(values >= lower) & (values <= upper)]
 
                             if not filtered_values.empty:
-                                avg = round(filtered_values.mean(), 2)
-                                sector_averages[field_expr] = avg
-                                print(f"   ✅ {field_expr}: {avg:,} (aus {len(filtered_values)}/{len(values)} Werten)")
+                                avg = round(filtered_values.mean(), 4)
+                                sector_averages[resolved_col_name] = avg
+                                print(f"   ✅ {resolved_col_name}: {avg:,} (aus {len(filtered_values)} Werten)")
                             else:
-                                print(f"   ⚠️ {field_expr}: Keine Werte nach Ausreißer-Filterung")
+                                print(f"   ❌ {resolved_col_name}: Keine Werte nach Filterung")
                         else:
-                            print(f"   ⚠️ {field_expr}: Zu wenige Datenpunkte ({len(values)})")
+                            print(f"   ❌ {resolved_col_name}: Zu wenig Daten ({len(values)} Werte)")
                     else:
-                        print(f"   ❌ {field_expr}: Keine Datenspalten gefunden")
+                        print(f"   ❌ {field_expr}: Keine Datenspalte gefunden")
                 else:
                     print(f"   ❌ {field_expr}: Keine Sektor-Daten erhalten")
 
@@ -327,11 +241,11 @@ def get_sector_average(sector_code, sector_name, refinitiv_fields):
                 print(f"   ❌ Fehler bei {field_expr}: {e}")
                 continue
 
-        print(f"✅ {len(sector_averages)}/{len(refinitiv_fields)} Sektor-Durchschnitte berechnet für {sector_name}")
+        print(f"✅ {len(sector_averages)} Sektor-Durchschnitte berechnet")
         return sector_averages
 
     except Exception as e:
-        print(f"❌ Fehler bei Sektor-Durchschnitts-Berechnung: {e}")
+        print(f"❌ Fehler bei Sektor-Durchschnittsberechnung: {e}")
         return {}
     finally:
         try:
@@ -340,7 +254,88 @@ def get_sector_average(sector_code, sector_name, refinitiv_fields):
         except:
             pass
 
-# BESTEHENDE FUNKTION FÜR RÜCKWÄRTSKOMPATIBILITÄT
-def get_consumer_discretionary_sector_average(refinitiv_fields):
-    """Legacy-Funktion für Consumer Discretionary - nutzt neue generische Funktion"""
-    return get_sector_average("25", "Consumer Discretionary", refinitiv_fields)
+def get_sector_average_by_companies(companies, field_expressions):
+    """
+    Berechnet Refinitiv-Kennzahlen-Durchschnitte für eine spezifische Liste von Unternehmen
+
+    Args:
+        companies: Liste von Unternehmen-Dictionaries mit 'RIC'-Schlüssel
+        field_expressions: Liste von Refinitiv-Feldausdrücken
+
+    Returns:
+        Dictionary mit Durchschnittswerten für jedes Feld
+    """
+    if not companies or not field_expressions:
+        return {}
+
+    # Extrahiere RICs
+    ric_list = [comp['RIC'] for comp in companies if comp.get('RIC')]
+
+    if not ric_list:
+        return {}
+
+    print(f"📊 Berechne Durchschnitte für {len(ric_list)} Unternehmen...")
+
+    try:
+        rd.open_session()
+
+        # Hole Refinitiv-Daten
+        all_data = fetch_refinitiv_data(ric_list, field_expressions)
+
+        if not all_data:
+            print("⚠️ Keine Refinitiv-Daten erhalten")
+            return {}
+
+        # Berechne Durchschnitte für jedes Feld
+        averages = {}
+
+        for field_expr in field_expressions:
+            if not field_expr.strip():
+                continue
+
+            # Finde die entsprechende Spalte im Dictionary
+            resolved_field = resolve_field_name(field_expr)
+
+            # Suche nach dem Feld in den Daten (verschiedene Varianten probieren)
+            field_data = None
+            for data_key in all_data.keys():
+                if (data_key == resolved_field or
+                    data_key == field_expr or
+                    data_key.replace('TR.', '') == resolved_field or
+                    data_key.replace('TR.', '') == field_expr.replace('TR.', '')):
+                    field_data = all_data[data_key]
+                    break
+
+            if field_data:
+                # Konvertiere zu numerischen Werten und berechne Durchschnitt
+                values = []
+                for ric, value in field_data.items():
+                    if pd.notna(value) and str(value).strip() != '':
+                        try:
+                            # Bereinige Wert falls nötig
+                            clean_value = str(value).replace(',', '').replace('%', '')
+                            num_val = pd.to_numeric(clean_value, errors='coerce')
+                            if pd.notna(num_val):
+                                values.append(num_val)
+                        except:
+                            continue
+
+                if len(values) > 0:
+                    avg_value = sum(values) / len(values)
+                    averages[resolved_field] = avg_value
+                    print(f"   📈 {resolved_field}: {avg_value:.4f} (aus {len(values)} von {len(ric_list)} Unternehmen)")
+                else:
+                    print(f"   ⚠️ {resolved_field}: Keine gültigen Werte gefunden")
+            else:
+                print(f"   ❌ {field_expr}: Feld nicht in den Daten gefunden")
+
+        return averages
+
+    except Exception as e:
+        print(f"❌ Fehler bei Durchschnittsberechnung: {e}")
+        return {}
+    finally:
+        try:
+            rd.close_session()
+        except:
+            pass

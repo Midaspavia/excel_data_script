@@ -1,12 +1,17 @@
 import os
 import pandas as pd
-from excel_kennzahlen import fetch_excel_kennzahlen_by_ric
+from excel_kennzahlen import fetch_excel_kennzahlen_by_ric, fetch_excel_kennzahlen_by_ric_filtered, clear_excel_cache
 from refinitiv_integration import get_refinitiv_kennzahlen_for_companies
 import glob
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.formatting.rule import ColorScaleRule
 from openpyxl.utils.dataframe import dataframe_to_rows
+import time
+import warnings
+
+# KORRIGIERT: Unterdrücke openpyxl Warnungen über Datums-Formatierung
+warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 
 DATA_DIR = "excel_data/data"
 
@@ -23,166 +28,170 @@ def cleanup_temp_files():
     """Bereinigt temporäre Excel-Dateien (~$*.xlsx) nach der Ausführung"""
     print("🧹 BEREINIGE TEMPORÄRE DATEIEN...")
 
-    # Suche in allen relevanten Verzeichnissen
     directories = ["excel_data/", "excel_data/data/", "."]
-
     deleted_count = 0
+
     for directory in directories:
         if os.path.exists(directory):
             temp_files = glob.glob(os.path.join(directory, "~$*.xlsx"))
             for temp_file in temp_files:
                 try:
                     os.remove(temp_file)
-                    print(f"🗑️  Gelöscht: {temp_file}")
                     deleted_count += 1
                 except Exception as e:
-                    print(f"⚠️  Fehler beim Löschen von {temp_file}: {e}")
+                    pass
 
     if deleted_count > 0:
         print(f"✅ {deleted_count} temporäre Dateien bereinigt")
-    else:
-        print("✅ Keine temporären Dateien gefunden")
 
 def process_companies():
-    """Hauptfunktion: Liest input_user.xlsx und erstellt output.xlsx mit Daten aus Excel-Dateien UND Refinitiv-Kennzahlen"""
-    print("🚀 STARTE VERARBEITUNG (MEHRERE RICs/Namen + Excel + Refinitiv)...")
+    """OPTIMIERTE Hauptfunktion: Schnellere Verarbeitung mit Caching"""
+    start_time = time.time()
+    print("🚀 STARTE OPTIMIERTE VERARBEITUNG...")
 
     try:
-        # 1. Lese input_user.xlsx
-        try:
-            df_input = pd.read_excel("excel_data/input_user.xlsx")
+        # 1. Lese input_user.xlsx (SCHNELL)
+        print("📖 Lese input_user.xlsx...")
+        df_input = pd.read_excel("excel_data/input_user.xlsx")
 
-            # Kennzahlen aus der ersten Zeile für alle verwenden
-            first_row = df_input.iloc[0]
-            excel_fields_raw = df_input["Kennzahlen aus Excel"].dropna().astype(str).str.strip().tolist()
-            refinitiv_fields_raw = df_input["Kennzahlen aus Refinitiv"].dropna().astype(str).str.strip().tolist()
+        # Kennzahlen aus der ersten Zeile
+        first_row = df_input.iloc[0]
+        excel_fields = list(dict.fromkeys(df_input["Kennzahlen aus Excel"].dropna().astype(str).str.strip().tolist()))
+        refinitiv_fields = list(dict.fromkeys(df_input["Kennzahlen aus Refinitiv"].dropna().astype(str).str.strip().tolist()))
 
-            # KORRIGIERT: Entferne Duplikate aus Kennzahlen-Listen (behält Reihenfolge bei)
-            excel_fields = list(dict.fromkeys(excel_fields_raw))
-            refinitiv_fields = list(dict.fromkeys(refinitiv_fields_raw))
+        # Filter-Einstellungen
+        sub_industry_filter = str(first_row.get("Sub-Industry", "")).strip().upper()
+        focus_filter = str(first_row.get("Focus", "")).strip().upper()
 
-            # Zeige Duplikat-Bereinigung an
-            if len(excel_fields_raw) != len(excel_fields):
-                print(f"🔧 Excel-Kennzahlen: {len(excel_fields_raw)} → {len(excel_fields)} (Duplikate entfernt)")
-            if len(refinitiv_fields_raw) != len(refinitiv_fields):
-                print(f"🔧 Refinitiv-Kennzahlen: {len(refinitiv_fields_raw)} → {len(refinitiv_fields)} (Duplikate entfernt)")
+        if focus_filter == "X":
+            is_focus = True
+            filter_type = "Focus"
+        elif sub_industry_filter == "X":
+            is_focus = False
+            filter_type = "Sub-Industry"
+        else:
+            is_focus = False
+            filter_type = "Sub-Industry (Default)"
 
-            # Filter-Einstellungen aus der ersten Zeile
-            sub_industry_filter = str(first_row.get("Sub-Industry", "")).strip().upper()
-            focus_filter = str(first_row.get("Focus", "")).strip().upper()
+        print(f"🎯 Filter: {filter_type}")
+        print(f"📋 Excel-Kennzahlen: {len(excel_fields)}")
+        print(f"📊 Refinitiv-Kennzahlen: {len(refinitiv_fields)}")
 
-            # Bestimme Filter-Typ basierend auf X-Markierung
-            # KORRIGIERT: Focus hat Priorität vor Sub-Industry
-            if focus_filter == "X":
-                is_focus = True
-                filter_type = "Focus"
-            elif sub_industry_filter == "X":
-                is_focus = False
-                filter_type = "Sub-Industry"
-            else:
-                # Fallback: Standard ist Sub-Industry
-                is_focus = False
-                filter_type = "Sub-Industry (Default)"
+        # 2. SAMMLE ALLE INPUT-UNTERNEHMEN (SCHNELL)
+        input_companies = []
+        all_gics_sectors = set()
 
-            print(f"🎯 Filter-Typ: {filter_type}")
-            print(f"📋 Gewünschte Excel-Kennzahlen: {excel_fields}")
-            print(f"📊 Gewünschte Refinitiv-Kennzahlen: {refinitiv_fields}")
+        for index, row in df_input.iterrows():
+            input_name = str(row.iloc[0] if len(row) > 0 else "").strip()
+            input_ric = str(row.iloc[1] if len(row) > 1 else "").strip()
 
-            # 2. Sammle alle Input-Unternehmen aus allen Zeilen
-            input_companies = []
-            for index, row in df_input.iterrows():
-                input_name = str(row.iloc[0] if len(row) > 0 else "").strip()  # Spalte A
-                input_ric = str(row.iloc[1] if len(row) > 1 else "").strip()   # Spalte B
+            gics_sector = ""
+            if "GICS Sector" in df_input.columns:
+                gics_sector = str(row.get("GICS Sector", "")).strip()
 
-                # Überspringe leere Zeilen
-                if not input_name and not input_ric:
-                    continue
-                if input_name.lower() in ["", "nan", "none"] and input_ric.lower() in ["", "nan", "none"]:
-                    continue
+            # Überspringe leere Zeilen
+            if not input_name and not input_ric:
+                continue
+            if input_name.lower() in ["", "nan", "none"] and input_ric.lower() in ["", "nan", "none"]:
+                continue
 
-                input_companies.append({
-                    'name': input_name if input_name.lower() not in ["", "nan", "none"] else None,
-                    'ric': input_ric if input_ric.lower() not in ["", "nan", "none"] else None,
-                    'row_number': index + 1
-                })
+            if gics_sector and gics_sector.lower() not in ["", "nan", "none"]:
+                all_gics_sectors.add(gics_sector)
 
-            print(f"📋 {len(input_companies)} Input-Unternehmen gefunden")
+            input_companies.append({
+                'name': input_name if input_name.lower() not in ["", "nan", "none"] else None,
+                'ric': input_ric if input_ric.lower() not in ["", "nan", "none"] else None,
+                'gics_sector': gics_sector if gics_sector.lower() not in ["", "nan", "none"] else None,
+                'row_number': index + 1
+            })
 
-        except Exception as e:
-            print(f"❌ Fehler beim Lesen von input_user.xlsx: {e}")
-            return []
+        print(f"📋 {len(input_companies)} Input-Unternehmen")
+        print(f"🏭 GICS Sektoren: {sorted(all_gics_sectors)}")
 
-        # 3. Verarbeite jedes Input-Unternehmen
+        # 3. OPTIMIERTE VERARBEITUNG
         all_results = []
-        processed_groups = set()  # Verhindere Duplikate bei gleichen Gruppen
+        processed_groups = set()
+        sector_companies = {}
+
+        # Leere Cache für frische Daten
+        clear_excel_cache()
 
         for i, input_company in enumerate(input_companies, 1):
-            print(f"\n🔍 VERARBEITE {i}/{len(input_companies)}: Zeile {input_company['row_number']}")
+            print(f"\n🔍 {i}/{len(input_companies)}: Zeile {input_company['row_number']}")
 
-            # Bestimme Suchstrategie: RIC hat Priorität, dann Name
+            # Bestimme Suchstrategie
+            start_company = None
             if input_company['ric']:
-                print(f"   🎯 RIC-Suche für '{input_company['ric']}'")
+                print(f"   🎯 RIC: {input_company['ric']}")
                 start_company = find_company_by_ric(input_company['ric'])
             elif input_company['name']:
-                if len(input_company['name']) < 4:
-                    print(f"   ❌ Name '{input_company['name']}' zu kurz (min. 4 Zeichen)")
+                if len(input_company['name']) >= 4:
+                    print(f"   🎯 Name: {input_company['name']}")
+                    start_company = find_company_by_name(input_company['name'])
+                else:
+                    print(f"   ❌ Name zu kurz: {input_company['name']}")
                     continue
-                print(f"   🎯 Name-Suche für '{input_company['name']}'")
-                start_company = find_company_by_name(input_company['name'])
             else:
-                print("   ❌ Weder RIC noch Name vorhanden")
+                print("   ❌ Weder RIC noch Name")
                 continue
 
             if not start_company:
-                print(f"   ❌ Unternehmen nicht gefunden!")
+                print(f"   ❌ Nicht gefunden!")
                 continue
 
-            print(f"   ✅ Gefunden: {start_company['Name']} ({start_company['RIC']})")
+            print(f"   ✅ {start_company['Name']} ({start_company['RIC']})")
 
-            # Bestimme Gruppe für Filterung
-            if is_focus and start_company.get('Focus') and str(start_company.get('Focus')).strip().lower() not in ['', 'nan', 'none']:
-                group_key = f"focus_{start_company['Focus']}"
-                if group_key in processed_groups:
-                    print(f"   ⏭️  Focus-Gruppe '{start_company['Focus']}' bereits verarbeitet")
-                    continue
-                processed_groups.add(group_key)
-                print(f"   🎯 Focus-Modus: Suche nach Focus-Gruppe '{start_company['Focus']}'")
-                peer_companies = find_companies_by_focus(start_company['Focus'])
-            elif is_focus and (not start_company.get('Focus') or str(start_company.get('Focus')).strip().lower() in ['', 'nan', 'none']):
-                # FALLBACK: Wenn Focus-Filter gewählt, aber Unternehmen hat keinen Focus-Wert
-                group_key = f"subindustry_{start_company.get('Sub-Industry')}"
-                if group_key in processed_groups:
-                    print(f"   ⏭️  Sub-Industry '{start_company.get('Sub-Industry')}' bereits verarbeitet")
-                    continue
-                processed_groups.add(group_key)
-                print(f"   ⚠️  Focus-Filter gewählt, aber Unternehmen hat keinen Focus-Wert")
-                print(f"   🔄 Fallback auf Sub-Industry-Modus: Suche nach Sub-Industry '{start_company.get('Sub-Industry')}'")
-                peer_companies = find_companies_by_sub_industry(start_company.get('Sub-Industry'))
+            # WIEDERHERGESTELLT: Erstelle eindeutigen Gruppenschlüssel für Peer-Group-Verarbeitung
+            group_key = f"{start_company.get('Sub-Industry', 'Unknown')}_{start_company.get('Focus', 'Unknown')}"
+
+            # Überspringe, wenn diese Gruppe bereits verarbeitet wurde
+            if group_key in processed_groups:
+                print(f"   ⏭️  Gruppe '{group_key}' bereits verarbeitet - überspringe")
+                continue
+
+            processed_groups.add(group_key)
+
+            # WIEDERHERGESTELLT: Finde alle Peer-Unternehmen derselben Sub-Industry/Focus-Gruppe
+            print(f"   🔍 Suche Peer-Group für: Sub-Industry='{start_company.get('Sub-Industry', '')}', Focus='{start_company.get('Focus', '')}'")
+
+            if is_focus:
+                peer_companies = find_companies_by_focus(start_company.get('Focus', ''))
             else:
-                group_key = f"subindustry_{start_company.get('Sub-Industry')}"
-                if group_key in processed_groups:
-                    print(f"   ⏭️  Sub-Industry '{start_company.get('Sub-Industry')}' bereits verarbeitet")
-                    continue
-                processed_groups.add(group_key)
-                print(f"   🎯 Sub-Industry-Modus: Suche nach Sub-Industry '{start_company.get('Sub-Industry')}'")
-                peer_companies = find_companies_by_sub_industry(start_company.get('Sub-Industry'))
+                peer_companies = find_companies_by_sub_industry(start_company.get('Sub-Industry', ''))
 
-            print(f"   📊 {len(peer_companies)} Unternehmen der Gruppe gefunden")
+            # KORRIGIERT: Füge das Input-Unternehmen selbst hinzu, falls es nicht in der Peer-Liste steht
+            input_company_in_peers = any(comp['RIC'] == start_company['RIC'] for comp in peer_companies)
+            if not input_company_in_peers:
+                print(f"   📌 Input-Unternehmen {start_company['Name']} ({start_company['RIC']}) nicht in Peer-Liste gefunden - füge hinzu")
+                peer_companies.insert(0, start_company)  # Füge am Anfang hinzu
 
-            # 4. Hole Refinitiv-Kennzahlen für diese Gruppe (falls vorhanden)
+            if not peer_companies:
+                print(f"   ❌ Keine Peer-Unternehmen gefunden!")
+                continue
+
+            print(f"   📊 {len(peer_companies)} Peer-Unternehmen gefunden (inkl. Input-Unternehmen)")
+
+            # Sammle für Refinitiv-Durchschnitte
+            sector_key = input_company['gics_sector'] or 'Unknown'
+            if sector_key not in sector_companies:
+                sector_companies[sector_key] = []
+            sector_companies[sector_key].extend(peer_companies)
+
+            # 4. HOLE REFINITIV-DATEN (für alle Peer-Unternehmen)
             refinitiv_data = {}
             if refinitiv_fields:
-                print(f"   🔄 Hole Refinitiv-Kennzahlen für {len(peer_companies)} Unternehmen...")
+                print(f"   🔄 Refinitiv für {len(peer_companies)} Unternehmen...")
                 refinitiv_data = get_refinitiv_kennzahlen_for_companies(peer_companies, refinitiv_fields)
 
-            # 5. Sammle Kennzahlen für alle Unternehmen der Gruppe
+            # 5. SAMMLE KENNZAHLEN (mit GICS Sector-Filter)
             for j, company in enumerate(peer_companies, 1):
-                print(f"     🏢 {j}/{len(peer_companies)}: {company['Name']} ({company['RIC']})")
+                print(f"     🏢 {j}/{len(peer_companies)}: {company['Name']}")
 
-                # Sammle Excel-Kennzahlen
-                excel_kennzahlen = get_kennzahlen_for_company(company['RIC'], excel_fields)
+                # Excel-Kennzahlen mit GICS Sector-Filter (CACHED!)
+                gics_sectors_for_search = [input_company['gics_sector']] if input_company['gics_sector'] else None
+                excel_kennzahlen = get_kennzahlen_for_company_filtered(company['RIC'], excel_fields, gics_sectors_for_search)
 
-                # Sammle Refinitiv-Kennzahlen
+                # Refinitiv-Kennzahlen
                 refinitiv_kennzahlen = refinitiv_data.get(company['RIC'], {})
 
                 # Erstelle Ergebnis
@@ -191,13 +200,14 @@ def process_companies():
                     "RIC": company['RIC'],
                     "Sub-Industry": company.get('Sub-Industry', ''),
                     "Focus": company.get('Focus', ''),
-                    "Input_Source": f"Zeile {input_company['row_number']}"  # Markiere Herkunft
+                    "GICS_Sector": input_company['gics_sector'] or '',
+                    "Input_Source": f"Zeile {input_company['row_number']}"
                 }
                 result.update(excel_kennzahlen)
                 result.update(refinitiv_kennzahlen)
                 all_results.append(result)
 
-                print(f"       ✅ {len(excel_kennzahlen)} Excel + {len(refinitiv_kennzahlen)} Refinitiv Kennzahlen")
+                print(f"       ✅ {len(excel_kennzahlen)} Excel + {len(refinitiv_kennzahlen)} Refinitiv")
 
         # 6. Speichere Output mit schönem Design
         if all_results:
@@ -217,89 +227,54 @@ def process_companies():
             print("\n🔢 BERECHNE DURCHSCHNITTE FÜR EXCEL-KENNZAHLEN...")
             df_output_with_averages = calculate_excel_averages(df_output, excel_fields)
 
-            # 🏭 BERECHNE CONSUMER DISCRETIONARY SECTOR DURCHSCHNITTE FÜR REFINITIV-KENNZAHLEN
+            # 🏭 NEU: BERECHNE SEKTOR-SPEZIFISCHE DURCHSCHNITTE FÜR REFINITIV-KENNZAHLEN
             if refinitiv_fields:
-                print("\n🏭 BERECHNE CONSUMER DISCRETIONARY SECTOR DURCHSCHNITTE...")
-                from refinitiv_integration import get_consumer_discretionary_sector_average
-                sector_averages = get_consumer_discretionary_sector_average(refinitiv_fields)
+                print(f"\n🏭 BERECHNE REFINITIV DURCHSCHNITTE FÜR {len(sector_companies)} SEKTOREN...")
 
-                if sector_averages:
-                    print(f"   🔍 DEBUG: Verfügbare Spalten: {list(df_output_with_averages.columns)}")
-                    print(f"   🔍 DEBUG: Berechnete Durchschnitte: {list(sector_averages.keys())}")
+                for sector_name, companies_list in sector_companies.items():
+                    if not companies_list or sector_name == 'Unknown':
+                        continue
 
-                    # Füge Sector-Durchschnitt als neue Zeile hinzu
-                    sector_avg_row = {
-                        'Name': '🏭 Ø Consumer Discretionary Sector',
-                        'RIC': '',
-                        'Sub-Industry': '',
-                        'Focus': '',
-                        'Input_Source': 'Durchschnitt (GICS Sector 25)'
-                    }
+                    # Entferne Duplikate basierend auf RIC
+                    unique_companies = {comp['RIC']: comp for comp in companies_list}.values()
+                    unique_companies = list(unique_companies)
 
-                    # Füge alle bestehenden Spalten mit leeren Werten hinzu
-                    for col in df_output_with_averages.columns:
-                        if col not in sector_avg_row:
-                            sector_avg_row[col] = None
+                    print(f"   🏭 Sektor '{sector_name}': {len(unique_companies)} Unternehmen")
 
-                    # Füge Refinitiv-Kennzahlen-Durchschnitte hinzu
-                    for field, avg_value in sector_averages.items():
-                        # Erstelle eine Liste möglicher Spaltennamen
-                        possible_column_names = [
-                            field,  # Original: "EBIT"
-                            field.replace('TR.', ''),  # Ohne TR.: "EBIT"
-                            field.upper(),  # Großbuchstaben: "EBIT"
-                            field.lower(),  # Kleinbuchstaben: "ebit"
-                        ]
+                    from refinitiv_integration import get_sector_average_by_companies
+                    sector_averages = get_sector_average_by_companies(unique_companies, refinitiv_fields)
 
-                        # Wenn es ein TR.-Feld ist, füge auch TR.-Varianten hinzu
-                        if field.startswith('TR.'):
-                            clean_field = clean_refinitiv_field_name(field)
-                            possible_column_names.extend([
-                                clean_field,
-                                clean_field.upper(),
-                                clean_field.lower()
-                            ])
+                    if sector_averages:
+                        # Füge Sektor-Durchschnitt als neue Zeile hinzu
+                        sector_avg_row = {
+                            'Name': f'🏭 Ø {sector_name} Sector',
+                            'RIC': '',
+                            'Sub-Industry': '',
+                            'Focus': '',
+                            'GICS_Sector': sector_name,
+                            'Input_Source': f'Durchschnitt ({sector_name} Sector)'
+                        }
 
-                        found_column = None
+                        # Füge alle bestehenden Spalten mit leeren Werten hinzu
+                        for col in df_output_with_averages.columns:
+                            if col not in sector_avg_row:
+                                sector_avg_row[col] = None
 
-                        # Suche nach exakter Übereinstimmung
-                        for possible_name in possible_column_names:
-                            if possible_name in df_output_with_averages.columns:
-                                found_column = possible_name
-                                print(f"   🎯 EXAKT gefunden: {field} → {possible_name}")
-                                break
+                        # Füge Refinitiv-Kennzahlen-Durchschnitte hinzu
+                        for field, avg_value in sector_averages.items():
+                            cleaned_field_name = clean_refinitiv_field_name(field)
+                            sector_avg_row[cleaned_field_name] = avg_value
+                            print(f"     📊 {cleaned_field_name}: {avg_value}")
 
-                        # Wenn nicht gefunden, suche nach Teilstring-Übereinstimmungen
-                        if not found_column:
-                            for col in df_output_with_averages.columns:
-                                for possible_name in possible_column_names:
-                                    if (possible_name.lower() in col.lower() or
-                                        col.lower() in possible_name.lower()):
-                                        found_column = col
-                                        print(f"   🎯 TEILSTRING gefunden: {field} → {col}")
-                                        break
-                                if found_column:
-                                    break
+                        # Erstelle DataFrame für neue Zeile und füge hinzu
+                        sector_avg_df = pd.DataFrame([sector_avg_row])
+                        df_output_with_averages = pd.concat([df_output_with_averages, sector_avg_df], ignore_index=True)
 
-                        if found_column:
-                            sector_avg_row[found_column] = avg_value
-                            print(f"   📈 {found_column}: {avg_value:,.4f} (Sector-Durchschnitt)")
-                        else:
-                            # Fallback: Erstelle neue Spalte
-                            clean_field = field.replace('TR.', '') if field.startswith('TR.') else field
-                            sector_avg_row[clean_field] = avg_value
-                            print(f"   ⚠️  NEUE SPALTE: {clean_field}: {avg_value:,.4f} (Sector-Durchschnitt)")
-
-                    # Füge Sector-Durchschnitts-Zeile zum DataFrame hinzu
-                    df_output_with_averages = pd.concat([df_output_with_averages, pd.DataFrame([sector_avg_row])], ignore_index=True)
-                    print(f"   ✅ Consumer Discretionary Sector-Durchschnitt hinzugefügt")
-
-                    print(f"   🔍 DEBUG: Finale Spalten: {list(df_output_with_averages.columns)}")
             # KORRIGIERT: Filtere Output-DataFrame, um nur angeforderte Kennzahlen zu behalten
             print(f"\n🔍 FILTERE OUTPUT AUF NUR ANGEFORDERTE KENNZAHLEN...")
 
             # Basis-Spalten die immer beibehalten werden
-            base_columns = ['Name', 'RIC', 'Sub-Industry', 'Focus', 'Input_Source']
+            base_columns = ['Name', 'RIC', 'Sub-Industry', 'Focus', 'Input_Source', 'GICS_Sector']
 
             # Sammle alle erlaubten Spalten
             allowed_columns = base_columns.copy()
@@ -464,10 +439,24 @@ def find_company_by_ric(ric):
                         focus_value = str(row.iloc[3]).strip()   # Spalte D
                         ric_value = str(row.iloc[4]).strip()     # Spalte E
 
-                        # Finde Name-Spalte (Universe oder Holding)
+                        # KORRIGIERT: Robuste Name-Extraktion aus Spalte A (Holding) oder B (Universe)
                         name_value = "Unknown"
-                        if len(df.columns) > 1:
-                            name_value = str(row.iloc[1]).strip()  # Spalte B (Universe)
+
+                        # Versuche zuerst Spalte A (Holding)
+                        if len(df.columns) > 0:
+                            holding_name = str(row.iloc[0]).strip()
+                            if holding_name and holding_name.lower() not in ['nan', 'none', ''] and len(holding_name) > 2:
+                                name_value = holding_name
+
+                        # Falls Spalte A leer oder ungültig, versuche Spalte B (Universe)
+                        if name_value == "Unknown" and len(df.columns) > 1:
+                            universe_name = str(row.iloc[1]).strip()
+                            if universe_name and universe_name.lower() not in ['nan', 'none', ''] and len(universe_name) > 2:
+                                name_value = universe_name
+
+                        # Falls beide Spalten leer, verwende generischen Fallback-Namen
+                        if name_value == "Unknown":
+                            name_value = f"Company_{ric_value}"
 
                         company = {
                             "Name": name_value,
@@ -1016,3 +1005,15 @@ def calculate_excel_averages(df, excel_fields):
 
     print(f"✅ Durchschnittsberechnung abgeschlossen")
     return df
+
+def get_kennzahlen_for_company_filtered(ric, fields, gics_sectors=None):
+    """
+    Sammelt alle gewünschten Kennzahlen für ein Unternehmen basierend auf RIC
+    mit GICS Sector-Filter für Excel-Dateien
+
+    Args:
+        ric: Reuters Instrument Code
+        fields: Liste der gewünschten Kennzahlen
+        gics_sectors: Liste von GICS Sektoren für Datei-Filterung
+    """
+    return fetch_excel_kennzahlen_by_ric_filtered(ric, fields, gics_sectors)

@@ -1,124 +1,288 @@
 import pandas as pd
 import os
+import re
+from functools import lru_cache
 
 DATA_DIR = "excel_data/data"
 
-def fetch_excel_kennzahlen_by_ric(ric: str, fields: list) -> dict:
-    """Neue Funktion: Suche Kennzahlen direkt über RIC"""
-    result = {}
-    print(f"🔍 Suche nach Kennzahlen für RIC: {ric}")
-    print(f"📋 Gewünschte Felder: {fields}")
+# Globaler Cache für Excel-Daten
+_excel_cache = {}
+_files_loaded = set()
 
-    for file in os.listdir(DATA_DIR):
-        if not file.endswith(".xlsx") or file.startswith("~$"):
+def clear_excel_cache():
+    """Leert den Excel-Cache"""
+    global _excel_cache, _files_loaded
+    _excel_cache.clear()
+    _files_loaded.clear()
+    print("🧹 Excel-Cache geleert")
+
+@lru_cache(maxsize=32)
+def get_sector_excel_files(gics_sectors_tuple):
+    """
+    Cached Version: Filtert Excel-Dateien basierend auf GICS Sektoren
+    """
+    gics_sectors = list(gics_sectors_tuple) if gics_sectors_tuple else None
+
+    if not gics_sectors:
+        # Wenn keine Sektoren angegeben, alle Dateien zurückgeben
+        return tuple([os.path.join(DATA_DIR, f) for f in os.listdir(DATA_DIR)
+                if f.endswith(".xlsx") and not f.startswith("~$")])
+
+    # Normalisiere Sektoren für Vergleich
+    normalized_sectors = [sector.strip().lower() for sector in gics_sectors]
+
+    # Erweiterte Mapping von Sektor-Namen zu Datei-Patterns
+    sector_patterns = {
+        'consumer': [r'^Consumer_.*\.xlsx$', r'^Basic.*Consumer.*\.xlsx$'],
+        'materials': [r'^Materials_.*\.xlsx$'],
+        'health': [r'^Health.*\.xlsx$'],
+        'it': [r'^IT.*\.xlsx$', r'^.*Technology.*\.xlsx$'],
+        'technology': [r'^IT.*\.xlsx$', r'^.*Technology.*\.xlsx$'],
+        'utilities': [r'^Utilities.*\.xlsx$'],
+        'housing': [r'^Housing.*\.xlsx$']
+    }
+
+    filtered_files = []
+    available_files = [f for f in os.listdir(DATA_DIR) if f.endswith(".xlsx") and not f.startswith("~$")]
+
+    print(f"🎯 Gesuchte GICS Sektoren: {gics_sectors}")
+
+    for sector in normalized_sectors:
+        if sector in sector_patterns:
+            patterns = sector_patterns[sector]
+            for pattern in patterns:
+                matching_files = [f for f in available_files if re.match(pattern, f, re.IGNORECASE)]
+                for file in matching_files:
+                    full_path = os.path.join(DATA_DIR, file)
+                    if full_path not in filtered_files:
+                        filtered_files.append(full_path)
+        else:
+            # Fallback: Suche nach Dateien die den Sektor-Namen enthalten
+            fallback_files = [f for f in available_files if sector in f.lower()]
+            for file in fallback_files:
+                full_path = os.path.join(DATA_DIR, file)
+                if full_path not in filtered_files:
+                    filtered_files.append(full_path)
+
+    if not filtered_files:
+        print("⚠️ Keine passenden Excel-Dateien gefunden, verwende alle verfügbaren")
+        filtered_files = [os.path.join(DATA_DIR, f) for f in available_files]
+
+    print(f"📊 {len(filtered_files)} Excel-Dateien für Sektoren {gics_sectors}")
+    return tuple(filtered_files)
+
+def load_excel_files_once(file_paths):
+    """
+    Lädt alle Excel-Dateien einmalig in den Cache
+    """
+    global _excel_cache, _files_loaded
+
+    newly_loaded = 0
+    for file_path in file_paths:
+        if file_path in _files_loaded:
             continue
-        print(f"📁 Durchsuche Datei: {file}")
-        path = os.path.join(DATA_DIR, file)
-        xls = pd.ExcelFile(path)
 
-        for sheet_name in xls.sheet_names:
-            print(f"📄 Sheet: {sheet_name}")
+        file = os.path.basename(file_path)
+        print(f"📁 Lade Datei in Cache: {file}")
 
-            # Lese erst ohne Header, um dynamisch zu suchen
-            df_raw = pd.read_excel(xls, sheet_name=sheet_name, header=None)
+        try:
+            xls = pd.ExcelFile(file_path)
+            _excel_cache[file_path] = {}
 
-            # Suche nach Header-Zeile mit RIC
-            header_row = None
-            for i in range(min(10, len(df_raw))):
-                row = df_raw.iloc[i]
-                row_str = row.astype(str).str.lower().str.strip()
-                if "ric" in row_str.values:
-                    header_row = i
-                    break
+            for sheet_name in xls.sheet_names:
+                try:
+                    df_raw = pd.read_excel(xls, sheet_name=sheet_name, header=None)
+                    _excel_cache[file_path][sheet_name] = df_raw
+                except Exception as e:
+                    print(f"❌ Fehler beim Lesen von Sheet {sheet_name}: {e}")
+                    continue
 
-            if header_row is None:
-                print(f"⚠️ Keine RIC-Header-Zeile in {sheet_name}")
-                continue
+            _files_loaded.add(file_path)
+            newly_loaded += 1
 
-            # Lese mit dem gefundenen Header
-            df = pd.read_excel(xls, sheet_name=sheet_name, header=header_row)
+        except Exception as e:
+            print(f"❌ Fehler beim Öffnen von {file}: {e}")
+            continue
 
-            # Korrigiere Spaltennamen mit Informationen aus vorherigen Zeilen
-            if header_row > 0:
-                new_columns = []
-                for col_idx, orig_col in enumerate(df.columns):
-                    # Prüfe die Zeilen oberhalb des Headers für bessere Spaltennamen
-                    better_name = None
-                    for row_above in range(header_row):
-                        if col_idx < len(df_raw.columns):
-                            cell_value = df_raw.iloc[row_above, col_idx]
-                            if pd.notna(cell_value) and str(cell_value).strip() != "":
-                                cell_str = str(cell_value).strip()
-                                # Prüfe auf wichtige Kennzahlen-Namen
-                                cell_upper = cell_str.upper()
-                                if any(keyword in cell_upper for keyword in ["ISIN", "FLOAT", "FREE", "MARKET", "CURRENCY", "P/E", "P/B", "ROE", "ROA", "EBIT", "EBITDA"]):
-                                    better_name = cell_str
-                                    break
+    if newly_loaded > 0:
+        print(f"✅ {newly_loaded} neue Dateien in Cache geladen")
 
-                    if better_name and str(orig_col).startswith("Unnamed"):
-                        new_columns.append(better_name)
-                        print(f"🔧 Spalte korrigiert: '{orig_col}' → '{better_name}'")
-                    else:
-                        new_columns.append(str(orig_col).strip())
+def fetch_excel_kennzahlen_by_ric_filtered(ric: str, fields: list, gics_sectors=None) -> dict:
+    """
+    VEREINFACHT: Suche Kennzahlen direkt über RIC mit einfachem Header-Vergleich
+    """
+    result = {}
 
-                df.columns = new_columns
+    # Konvertiere zu Tuple für Caching
+    gics_sectors_tuple = tuple(gics_sectors) if gics_sectors else None
 
-            if "RIC" not in df.columns:
-                print(f"⚠️ Keine RIC-Spalte in {sheet_name}")
-                continue
+    # Hole gefilterte Excel-Dateien (cached)
+    excel_files = get_sector_excel_files(gics_sectors_tuple)
 
-            # Suche nach der Zeile mit dem spezifischen RIC
-            matching_rows = []
-            for idx, row in df.iterrows():
-                ric_value = row.get("RIC")
-                if pd.notna(ric_value) and str(ric_value).upper().strip() == ric.upper().strip():
-                    matching_rows.append(idx)
+    # Lade alle Dateien einmalig in Cache
+    load_excel_files_once(excel_files)
 
-            if not matching_rows:
-                print(f"⚠️ RIC '{ric}' nicht in {sheet_name} gefunden")
-                continue
+    for file_path in excel_files:
+        try:
+            # Lese Excel-Datei und teste verschiedene Sheets
+            xls = pd.ExcelFile(file_path)
 
-            # Verwende die erste passende Zeile
-            match_idx = matching_rows[0]
-            matched_row = df.iloc[match_idx]
-            print(f"✅ RIC {ric} gefunden in Zeile {match_idx + header_row + 1}")
+            for sheet_name in xls.sheet_names:
+                # Priorisiere bestimmte Sheet-Namen
+                if not any(keyword in sheet_name.lower() for keyword in ['equity', 'key', 'figures', 'data']):
+                    continue
 
-            # Sammle alle verfügbaren Felder aus dieser Zeile
-            for field in fields:
-                if field in result:
-                    continue  # Bereits gefunden
+                try:
+                    # KORRIGIERT: Finde die richtige Header-Zeile dynamisch
+                    df_raw = pd.read_excel(file_path, sheet_name=sheet_name, header=None)
 
-                value = None
-                # Direkte Suche nach Feldname
-                if field in df.columns:
-                    value = matched_row[field]
-                    if pd.notna(value) and str(value).strip() != "":
-                        result[field] = value
-                        print(f"✅ {field}: {value}")
+                    # Suche nach Header-Zeile mit RIC
+                    header_row = None
+                    for i in range(min(10, len(df_raw))):
+                        row = df_raw.iloc[i]
+                        # Prüfe jede Zelle in der Zeile
+                        for cell in row.values:
+                            if pd.notna(cell) and str(cell).strip().upper() == "RIC":
+                                header_row = i
+                                break
+                        if header_row is not None:
+                            break
+
+                    if header_row is None:
                         continue
 
-                # Fuzzy-Suche nach ähnlichen Spaltennamen
-                for col in df.columns:
-                    col_clean = str(col).strip()
-                    field_clean = field.strip()
+                    # Lese mit korrektem Header
+                    df = pd.read_excel(file_path, sheet_name=sheet_name, header=header_row)
 
-                    # Case-insensitive Vergleich
-                    if col_clean.lower() == field_clean.lower():
-                        value = matched_row[col]
-                        if pd.notna(value) and str(value).strip() != "":
-                            result[field] = value
-                            print(f"✅ {field} (als {col}): {value}")
-                            break
+                    # Prüfe ob RIC-Spalte vorhanden
+                    if "RIC" not in df.columns:
+                        continue
 
-                    # Prüfe, ob das Feld im Spaltennamen enthalten ist
-                    elif field_clean.lower() in col_clean.lower() or col_clean.lower() in field_clean.lower():
-                        value = matched_row[col]
-                        if pd.notna(value) and str(value).strip() != "":
-                            result[field] = value
-                            print(f"✅ {field} (ähnlich: {col}): {value}")
-                            break
+                    # Suche nach der Zeile mit dem spezifischen RIC
+                    matching_rows = df[df['RIC'].astype(str).str.upper().str.strip() == ric.upper().strip()]
 
-    print(f"📊 Gesammelte Kennzahlen für {ric}: {list(result.keys())}")
+                    if matching_rows.empty:
+                        continue
+
+                    # Verwende die erste passende Zeile
+                    matched_row = matching_rows.iloc[0]
+                    print(f"✅ RIC {ric} gefunden in {os.path.basename(file_path)} -> {sheet_name}")
+
+                    # Sammle alle gewünschten Felder aus dieser Zeile
+                    for field in fields:
+                        if field in result:
+                            continue  # Bereits gefunden
+
+                        # KORRIGIERT: Bereinige Feldname von Zeilenumbrüchen
+                        clean_field = field.replace('\n', ' ').replace('\r', ' ').strip()
+
+                        # Suche nach exakter Übereinstimmung oder bereinigter Version
+                        search_fields = [field, clean_field]
+
+                        found = False
+                        for search_field in search_fields:
+                            if search_field in df.columns:
+                                value = matched_row[search_field]
+
+                                # Verbesserte Überprüfung: Stelle sicher, dass der Wert nicht ein RIC-Code ist
+                                if pd.notna(value) and str(value).strip() != "":
+                                    str_value = str(value).strip().upper()
+
+                                    # Prüfe auf Fehlermeldungen ZUERST
+                                    error_messages = [
+                                        "THE RECORD COULD NOT BE FOUND",
+                                        "ERROR CODE: 0",
+                                        "NO DATA AVAILABLE",
+                                        "DATA NOT AVAILABLE",
+                                        "N/A",
+                                        "#N/A",
+                                        "#ERROR",
+                                        "NULL"
+                                    ]
+
+                                    # Wenn eine Fehlermeldung enthalten ist, setze leeren Wert
+                                    is_error_message = any(error_msg in str_value for error_msg in error_messages)
+
+                                    if is_error_message:
+                                        print(f"⚠️ Fehlermeldung '{value}' erkannt, setze leeren Wert")
+                                        result[field] = ""  # Leerer String statt überspringen
+                                        found = True
+                                        break
+
+                                    # Prüfe ob der Wert wie ein RIC aussieht (enthält typische RIC-Muster)
+                                    is_ric_like = (
+                                        # Exakter Match mit dem gesuchten RIC
+                                        str_value == ric.upper().strip() or
+                                        # Andere typische RIC-Muster (Buchstaben + Punkt + Buchstabe)
+                                        bool(re.match(r'^[A-Z]{1,6}\.[A-Z]{1,3}$', str_value)) or
+                                        # Nur Buchstaben ohne Punkt (wie "APD", "CLN")
+                                        (bool(re.match(r'^[A-Z]{1,6}$', str_value)) and len(str_value) <= 6)
+                                    )
+
+                                    if not is_ric_like:
+                                        result[field] = value
+                                        print(f"✅ Gefunden: {search_field} = {value}")
+                                        found = True
+                                        break
+                                    else:
+                                        print(f"⚠️ Wert '{value}' sieht wie ein RIC aus, überspringe")
+
+                        # Wenn nicht gefunden, erweiterte Suche
+                        if not found:
+                            # Suche nach ähnlichen Spalten (ohne Zeilenumbrüche)
+                            for col in df.columns:
+                                col_clean = str(col).replace('\n', ' ').replace('\r', ' ').strip()
+                                if col_clean.lower() == clean_field.lower():
+                                    value = matched_row[col]
+                                    if pd.notna(value) and str(value).strip() != "":
+                                        str_value = str(value).strip().upper()
+
+                                        # Prüfe auf Fehlermeldungen ZUERST
+                                        error_messages = [
+                                            "THE RECORD COULD NOT BE FOUND",
+                                            "ERROR CODE: 0",
+                                            "NO DATA AVAILABLE",
+                                            "DATA NOT AVAILABLE",
+                                            "N/A",
+                                            "#N/A",
+                                            "#ERROR",
+                                            "NULL"
+                                        ]
+
+                                        # Wenn eine Fehlermeldung enthalten ist, setze leeren Wert
+                                        is_error_message = any(error_msg in str_value for error_msg in error_messages)
+
+                                        if is_error_message:
+                                            print(f"⚠️ Fehlermeldung '{value}' erkannt, setze leeren Wert")
+                                            result[field] = ""  # Leerer String statt überspringen
+                                            break
+
+                                        # Gleiche RIC-Überprüfung wie oben
+                                        is_ric_like = (
+                                            str_value == ric.upper().strip() or
+                                            bool(re.match(r'^[A-Z]{1,6}\.[A-Z]{1,3}$', str_value)) or
+                                            (bool(re.match(r'^[A-Z]{1,6}$', str_value)) and len(str_value) <= 6)
+                                        )
+
+                                        if not is_ric_like:
+                                            result[field] = value
+                                            print(f"✅ Gefunden (ähnlich): {col} = {value}")
+                                            break
+                                        else:
+                                            print(f"⚠️ Wert '{value}' sieht wie ein RIC aus, überspringe")
+
+                    # Wenn Kennzahlen gefunden wurden, breche Sheet-Schleife ab
+                    if result:
+                        break
+
+                except Exception as e:
+                    continue
+
+        except Exception as e:
+            # Debug: Zeige welche Datei Probleme macht
+            print(f"❌ Fehler in {file_path}: {e}")
+            continue
+
     return result
 
 
@@ -340,3 +504,10 @@ def resolve_name_by_ric(ric: str) -> str:
                     print(f"⚠️ Kein Name-Spaltenmatch in {file}")
     print(f"❌ Kein Treffer für RIC '{ric}' gefunden.")
     return ""
+
+def fetch_excel_kennzahlen_by_ric(ric: str, fields: list) -> dict:
+    """
+    Wrapper-Funktion für Rückwärtskompatibilität:
+    Suche Kennzahlen direkt über RIC ohne GICS Sector-Filter
+    """
+    return fetch_excel_kennzahlen_by_ric_filtered(ric, fields, gics_sectors=None)
