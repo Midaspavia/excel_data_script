@@ -119,6 +119,32 @@ def calculate_gics_average(field_expression, resolved_col_name):
         print(f"⚠️ Fehler beim GICS-Durchschnitt: {e}")
         return None
 
+def calculate_gics_average_for_sector(sector_code, field_expression, resolved_col_name):
+    """Berechne GICS-Durchschnitt für einen spezifischen Sektor"""
+    try:
+        print(f"   📊 Berechne GICS-Durchschnitt für Sektor {sector_code}: {field_expression}")
+
+        sample = rd.get_data(
+            universe=f'SCREEN(U(IN(Equity(active,public,primary))/*UNV:Public*/), IN(TR.GICSSectorCode,"{sector_code}"), CURN=USD)',
+            fields=[field_expression]
+        )
+        if not sample.empty:
+            col = sample.columns[-1]
+            values = pd.to_numeric(sample[col], errors='coerce').dropna()
+            if not values.empty and len(values) > 5:  # Mindestens 5 Werte
+                # Entferne Ausreißer (5 % und 95 % Quantile)
+                lower = values.quantile(0.05)
+                upper = values.quantile(0.95)
+                filtered_values = values[(values >= lower) & (values <= upper)]
+                if not filtered_values.empty:
+                    avg = round(filtered_values.mean(), 4)
+                    print(f"     ✅ GICS-Durchschnitt für {resolved_col_name}: {avg:,} (aus {len(filtered_values)} von {len(values)} Unternehmen)")
+                    return avg
+        return None
+    except Exception as e:
+        print(f"     ⚠️ Fehler beim GICS-Durchschnitt für Sektor {sector_code}: {e}")
+        return None
+
 def format_refinitiv_value(value):
     """Formatiere Refinitiv-Werte für die Ausgabe"""
     if pd.isna(value):
@@ -474,3 +500,106 @@ def fetch_refinitiv_sector_averages(sector_name, field_expressions):
         except:
             pass
         return None
+
+def get_all_sector_averages(used_sectors, refinitiv_fields):
+    """
+    Berechnet Refinitiv-Kennzahlen-Durchschnitte für alle verwendeten GICS-Sektoren
+    """
+    print("🏭 BERECHNE DURCHSCHNITTE FÜR ALLE VERWENDETEN GICS-SEKTOREN...")
+
+    if not refinitiv_fields or not used_sectors:
+        print("⚠️ Keine Refinitiv-Kennzahlen oder Sektoren angegeben")
+        return {}
+
+    all_sector_averages = {}
+
+    try:
+        print("🔄 Öffne Refinitiv-Session für Multi-Sektor-Analyse...")
+        rd.open_session()
+
+        for sector_name in used_sectors:
+            # Finde den GICS-Code für den Sektor
+            sector_code = GICS_SECTOR_CODES.get(sector_name)
+            if not sector_code:
+                print(f"⚠️ GICS-Code für Sektor '{sector_name}' nicht gefunden")
+                continue
+
+            print(f"📋 Berechne Durchschnitte für {sector_name} (GICS {sector_code})...")
+
+            sector_averages = {}
+
+            # Berechne für jede Refinitiv-Kennzahl den Sektor-Durchschnitt
+            for field_expr in refinitiv_fields:
+                if not field_expr.strip():
+                    continue
+
+                # Stelle sicher, dass TR. am Anfang steht
+                if not field_expr.startswith('TR.'):
+                    field_expr = 'TR.' + field_expr
+
+                try:
+                    print(f"   📊 Berechne Sektor-Durchschnitt für: {field_expr}")
+
+                    # Hole Daten für den spezifischen GICS-Sektor
+                    sector_data = rd.get_data(
+                        universe=f'SCREEN(U(IN(Equity(active,public,primary))/*UNV:Public*/), IN(TR.GICSSectorCode,"{sector_code}"), CURN=USD)',
+                        fields=[field_expr]
+                    )
+
+                    if not sector_data.empty:
+                        # Resolva den echten Spaltennamen
+                        resolved_col_name = resolve_field_name(field_expr)
+
+                        # Finde die richtige Spalte
+                        data_col = None
+                        for col in sector_data.columns:
+                            if col != 'Instrument':
+                                data_col = col
+                                break
+
+                        if data_col:
+                            # Konvertiere zu numerischen Werten
+                            values = pd.to_numeric(sector_data[data_col], errors='coerce').dropna()
+
+                            if not values.empty and len(values) > 5:  # Mindestens 5 Werte für sinnvollen Durchschnitt
+                                # Entferne Ausreißer (5 % und 95 % Quantile)
+                                lower = values.quantile(0.05)
+                                upper = values.quantile(0.95)
+                                filtered_values = values[(values >= lower) & (values <= upper)]
+
+                                if not filtered_values.empty:
+                                    avg = round(filtered_values.mean(), 4)
+                                    sector_averages[resolved_col_name] = avg
+                                    print(f"     ✅ {resolved_col_name}: {avg:,} (aus {len(filtered_values)} von {len(values)} Unternehmen)")
+                                else:
+                                    print(f"     ❌ {resolved_col_name}: Keine Werte nach Filterung")
+                            else:
+                                print(f"     ❌ {resolved_col_name}: Zu wenig Daten ({len(values)} Werte)")
+                        else:
+                            print(f"     ❌ {field_expr}: Keine Datenspalte gefunden")
+                    else:
+                        print(f"     ❌ {field_expr}: Keine Sektor-Daten erhalten")
+
+                except Exception as e:
+                    print(f"     ❌ Fehler bei {field_expr}: {e}")
+                    continue
+
+            if sector_averages:
+                all_sector_averages[sector_name] = sector_averages
+                print(f"   ✅ {len(sector_averages)} Durchschnitte für {sector_name} berechnet")
+            else:
+                print(f"   ⚠️ Keine Durchschnitte für {sector_name} berechnet")
+
+        print(f"✅ GICS-Sektor-Durchschnitte für {len(all_sector_averages)} Sektoren berechnet")
+        return all_sector_averages
+
+    except Exception as e:
+        print(f"❌ Fehler bei Multi-Sektor-Durchschnittsberechnung: {e}")
+        return {}
+    finally:
+        try:
+            rd.close_session()
+            print("✅ Refinitiv-Session geschlossen")
+        except:
+            pass
+

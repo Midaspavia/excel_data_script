@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 from excel_kennzahlen import fetch_excel_kennzahlen_by_ric, fetch_excel_kennzahlen_by_ric_filtered, clear_excel_cache
-from refinitiv_integration import get_refinitiv_kennzahlen_for_companies, fetch_refinitiv_sector_averages
+from refinitiv_integration import get_refinitiv_kennzahlen_for_companies, get_all_sector_averages
 import glob
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -984,36 +984,17 @@ def calculate_excel_averages(df, excel_fields):
     return df
 
 def calculate_refinitiv_averages_by_sector(df, refinitiv_fields):
-    """Berechnet Sektor-Durchschnitte für Refinitiv-Kennzahlen basierend auf GICS-Sektoren"""
+    """Berechnet Sektor-Durchschnitte für Refinitiv-Kennzahlen basierend auf GICS-Sektoren - VEREINFACHT wie in der funktionierenden Version"""
     print("🔢 BERECHNE REFINITIV-DURCHSCHNITTE NACH SEKTOR...")
 
     if not refinitiv_fields or df.empty:
         print("⚠️ Keine Refinitiv-Kennzahlen oder leeres DataFrame, überspringe Durchschnittsberechnung")
         return df
 
-    # Bereinige Refinitiv-Feldnamen für Spalten-Lookup
-    refinitiv_columns = []
-    for field in refinitiv_fields:
-        original_field = field
-        clean_field = clean_refinitiv_field_name(field)
-
-        # Prüfe welche Version der Spalte existiert
-        if original_field in df.columns:
-            refinitiv_columns.append(original_field)
-        elif clean_field in df.columns:
-            refinitiv_columns.append(clean_field)
-
-    if not refinitiv_columns:
-        print("⚠️ Keine passenden Refinitiv-Spalten gefunden")
-        return df
-
-    print(f"📊 Berechne Sektor-Durchschnitte für: {refinitiv_columns}")
-
     # Ermittle verwendete GICS Sectoren aus dem aktuellen DataFrame
     print("   🎯 Ermittle verwendete GICS-Sektoren aus verarbeiteten Unternehmen...")
 
     used_sectors = set()
-    sector_mapping = {}
 
     for _, row in df.iterrows():
         if not row['Name'].startswith('💼 Ø') and not row['Name'].startswith('🎯 Ø') and not row['Name'].startswith('🏭 Ø'):
@@ -1022,119 +1003,65 @@ def calculate_refinitiv_averages_by_sector(df, refinitiv_fields):
                 sector = determine_gics_sector(ric)
                 if sector:
                     used_sectors.add(sector)
-                    sector_mapping[ric] = sector
 
     print(f"   📊 Verwendete GICS-Sektoren: {sorted(used_sectors)}")
 
-    # Berechne Durchschnitte für verwendete Sektoren
-    sector_averages = []
+    if not used_sectors:
+        print("   ⚠️ Keine GICS-Sektoren identifiziert")
+        return df
 
-    for sector in sorted(used_sectors):
-        print(f"   🔍 Berechne {sector}-Durchschnitt...")
+    # VEREINFACHTE LOGIK: Hole alle Sektor-Durchschnitte auf einmal
+    print("   🌐 Hole Refinitiv-Sektor-Durchschnitte für alle verwendeten Sektoren...")
+    all_sector_averages = get_all_sector_averages(list(used_sectors), refinitiv_fields)
 
-        # Sammle alle Unternehmen dieses Sektors aus dem DataFrame
-        sector_companies_in_df = df[
-            df['RIC'].apply(lambda x: sector_mapping.get(x) == sector) &
-            ~df['Name'].str.contains('Ø', na=False)  # Keine Durchschnitte
-        ]
+    if not all_sector_averages:
+        print("   ⚠️ Keine Sektor-Durchschnitte erhalten")
+        return df
 
-        if len(sector_companies_in_df) > 0:
-            print(f"     ���� {len(sector_companies_in_df)} Unternehmen aus {sector} im aktuellen DataFrame")
+    # Erstelle Durchschnitts-Zeilen für jeden Sektor
+    sector_average_rows = []
 
-            # NEUE LOGIK: Hole echte Refinitiv-Sektor-Durchschnitte über GICS-Nummer
-            print(f"     🌐 Hole Refinitiv-Sektor-Durchschnitte für {sector}...")
+    for sector_name, sector_data in all_sector_averages.items():
+        print(f"   ✅ Erstelle Sektor-Durchschnitts-Zeile für {sector_name}")
 
-            sector_refinitiv_data = fetch_refinitiv_sector_averages(sector, refinitiv_fields)
+        # Erstelle Durchschnitts-Zeile
+        avg_row = {
+            'Name': f'🏭 Ø {sector_name}',
+            'RIC': '',
+            'GICS Sector': sector_name,
+            'Sub-Industry': '',
+            'Focus': '',
+            'Peer_Group_Type': 'GICS-Sektor-Durchschnitt',
+            'Input_Row': f'GICS-Sektor-Ø (Refinitiv-Branchendurchschnitt)',
+        }
 
-            if sector_refinitiv_data:
-                print(f"     ✅ Refinitiv-Sektor-Durchschnitte für {sector} erhalten")
+        # Füge alle Refinitiv-Kennzahlen hinzu
+        for field in refinitiv_fields:
+            clean_field = clean_refinitiv_field_name(field)
 
-                # Erstelle Durchschnitts-Zeile mit echten Sektor-Durchschnitten
-                avg_row = {
-                    'Name': f'🏭 Ø {sector}',
-                    'RIC': '',
-                    'GICS Sector': sector,
-                    'Sub-Industry': '',
-                    'Focus': '',
-                    'Peer_Group_Type': 'GICS-Sektor-Durchschnitt',
-                    'Input_Row': f'GICS-Sektor-Ø (Refinitiv-Branchendurchschnitt)',
-                }
+            # Suche nach dem Wert in den Sektor-Daten
+            value = None
+            for possible_key in [field, clean_field, field.replace('TR.', ''), clean_field.replace('(', '').replace(')', '')]:
+                if possible_key in sector_data:
+                    value = sector_data[possible_key]
+                    break
 
-                # Füge Refinitiv-Sektor-Durchschnitte hinzu
-                for field in refinitiv_fields:
-                    clean_field = clean_refinitiv_field_name(field)
-
-                    # Suche nach dem Wert in den Sektor-Daten (verschiedene mögliche Schlüssel)
-                    value = None
-                    for possible_key in [field, clean_field, field.replace('TR.', ''), clean_field.replace('(', '').replace(')', '')]:
-                        if possible_key in sector_refinitiv_data:
-                            value = sector_refinitiv_data[possible_key]
-                            break
-
-                    if value is not None:
-                        avg_row[clean_field] = value
-                        print(f"       📊 {clean_field}: {value}")
-                    else:
-                        avg_row[clean_field] = ''
-
-                sector_averages.append(avg_row)
-                print(f"   ✅ {sector}-Sektor-Durchschnitt mit Refinitiv-Daten hinzugefügt")
-
+            if value is not None:
+                avg_row[clean_field] = value
+                print(f"       📊 {clean_field}: {value}")
             else:
-                # FALLBACK: Verwende die bisherige Logik mit DataFrame-Durchschnitten
-                print(f"     🔄 Fallback: Berechne Durchschnitt aus aktuellen Unternehmen...")
+                avg_row[clean_field] = ''
 
-                sector_refinitiv_data = []
-                for _, company_row in sector_companies_in_df.iterrows():
-                    company_data = {'Name': company_row['Name'], 'RIC': company_row['RIC'], 'Sector': sector}
+        sector_average_rows.append(avg_row)
 
-                    has_refinitiv_data = False
-                    for col in refinitiv_columns:
-                        value = company_row[col]
-                        if pd.notna(value) and str(value).strip() not in ['', 'nan', 'None', '0']:
-                            company_data[col] = value
-                            has_refinitiv_data = True
-
-                    if has_refinitiv_data:
-                        sector_refinitiv_data.append(company_data)
-
-                if len(sector_refinitiv_data) >= 1:
-                    df_sector = pd.DataFrame(sector_refinitiv_data)
-
-                    avg_row = {
-                        'Name': f'🏭 Ø {sector}',
-                        'RIC': '',
-                        'GICS Sector': sector,
-                        'Sub-Industry': '',
-                        'Focus': '',
-                        'Peer_Group_Type': 'Sektor-Durchschnitt',
-                        'Input_Row': f'Sektor-Ø ({len(sector_refinitiv_data)} Unternehmen)',
-                    }
-
-                    for col in refinitiv_columns:
-                        if col in df_sector.columns:
-                            valid_values = pd.to_numeric(df_sector[col], errors='coerce').dropna()
-                            if len(valid_values) > 0:
-                                avg_row[col] = valid_values.mean()
-                                print(f"       📊 {col}: {avg_row[col]:.4f} (aus {len(valid_values)} Werten)")
-                        else:
-                            avg_row[col] = ''
-
-                    sector_averages.append(avg_row)
-                    print(f"   ✅ {sector}-Durchschnitt mit DataFrame-Daten berechnet")
-                else:
-                    print(f"   ⚠️ Keine Refinitiv-Daten für {sector} verfügbar")
-        else:
-            print(f"   ⚠️ Keine Unternehmen aus {sector} im aktuellen DataFrame")
-
-    # Füge Sektor-Durchschnitte zum DataFrame hinzu
-    if sector_averages:
-        df_sectors = pd.DataFrame(sector_averages)
+    # Füge alle Sektor-Durchschnitte zum DataFrame hinzu
+    if sector_average_rows:
+        df_sectors = pd.DataFrame(sector_average_rows)
         df_combined = pd.concat([df, df_sectors], ignore_index=True)
-        print(f"   ✅ {len(sector_averages)} Sektor-Durchschnitte hinzugefügt")
+        print(f"   ✅ {len(sector_average_rows)} GICS-Sektor-Durchschnitte hinzugefügt")
         return df_combined
     else:
-        print("   ⚠️ Keine Sektor-Durchschnitte berechnet")
+        print("   ⚠️ Keine Sektor-Durchschnitte erstellt")
         return df
 def save_beautiful_output(df, output_path):
     """Speichert das DataFrame mit verbesserter Formatierung und dynamischen Headern"""
