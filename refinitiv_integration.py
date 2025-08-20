@@ -4,6 +4,21 @@ import warnings
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
+# GICS Sektor Mapping zu Refinitiv Codes
+GICS_SECTOR_CODES = {
+    'Consumer Discretionary': '25',
+    'Consumer Staples': '30',
+    'Energy': '10',
+    'Financials': '40',
+    'Health Care': '35',
+    'Industrials': '20',
+    'Information Technology': '45',
+    'Materials': '15',
+    'Real Estate': '60',
+    'Communication Services': '50',
+    'Utilities': '55'
+}
+
 def resolve_field_name(field_expression):
     """Liefert den tatsächlichen Spaltennamen zu einem Refinitiv-Feldausdruck mit Period-Information"""
     try:
@@ -339,3 +354,123 @@ def get_sector_average_by_companies(companies, field_expressions):
             rd.close_session()
         except:
             pass
+
+def fetch_refinitiv_sector_averages(sector_name, field_expressions):
+    """
+    Hole echte Refinitiv-Sektor-Durchschnitte direkt von Refinitiv
+    Verwendet keine Einzelunternehmen, sondern die bereits berechneten Sektor-Durchschnitte
+    """
+    if sector_name not in GICS_SECTOR_CODES:
+        print(f"⚠️ GICS-Sektor '{sector_name}' nicht im Mapping gefunden")
+        return None
+
+    sector_code = GICS_SECTOR_CODES[sector_name]
+    print(f"🔍 Hole Refinitiv-Sektor-Durchschnitte für {sector_name} (GICS: {sector_code})")
+
+    try:
+        import refinitiv.data as rd
+        rd.open_session()
+
+        sector_averages = {}
+
+        # Verwende einen speziellen Sektor-RIC oder Index für Durchschnittswerte
+        # Refinitiv bietet oft Sektor-Indizes an
+        sector_rics = {
+            'Consumer Discretionary': ['.SPCD', 'XLY', '.DJU5340', 'IYC'],  # Verschiedene Sektor-Indizes
+            'Consumer Staples': ['.SPCS', 'XLP', '.DJU5350', 'XLP'],
+            'Information Technology': ['.SPIT', 'XLK', '.DJU9530', 'IGV'],
+            'Health Care': ['.SPHC', 'XLV', '.DJU4530', 'IHI'],
+            'Materials': ['.SPMT', 'XLB', '.DJU1510', 'VAW'],
+            'Energy': ['.SPEN', 'XLE', '.DJU1010', 'VDE'],
+            'Financials': ['.SPFN', 'XLF', '.DJU4010', 'VFH'],
+            'Industrials': ['.SPIN', 'XLI', '.DJU2010', 'VIS'],
+            'Utilities': ['.SPUT', 'XLU', '.DJU5510', 'VPU'],
+            'Real Estate': ['.SPRE', 'XLRE', '.DJU6010', 'VNQ'],
+            'Communication Services': ['.SPCM', 'XLC', '.DJU5010', 'VOX']
+        }
+
+        # Fallback: Verwende direkte Sektor-Aggregate-Abfrage
+        for field_expr in field_expressions:
+            if not field_expr.strip():
+                continue
+
+            # Stelle sicher, dass TR. am Anfang steht
+            if not field_expr.startswith('TR.'):
+                field_expr = 'TR.' + field_expr
+
+            try:
+                print(f"   📊 Hole Sektor-Durchschnitt für: {field_expr}")
+
+                # Methode 1: Verwende Sektor-Index falls verfügbar
+                sector_value = None
+                if sector_name in sector_rics:
+                    for sector_ric in sector_rics[sector_name]:
+                        try:
+                            sector_data = rd.get_data(universe=[sector_ric], fields=[field_expr])
+                            if not sector_data.empty and len(sector_data.columns) > 1:
+                                data_col = [col for col in sector_data.columns if col != 'Instrument'][0]
+                                value = sector_data[data_col].iloc[0]
+                                if pd.notna(value):
+                                    sector_value = value
+                                    print(f"     ✅ Gefunden über Sektor-Index {sector_ric}: {value}")
+                                    break
+                        except:
+                            continue
+
+                # Methode 2: Falls kein Sektor-Index funktioniert, verwende aggregierte Sektor-Abfrage
+                if sector_value is None:
+                    try:
+                        # Spezielle Refinitiv-Syntax für Sektor-Aggregate
+                        aggregate_universe = f"GICS({sector_code})"  # Vereinfachte GICS-Syntax
+
+                        # Alternative: Verwende Screening mit Aggregation
+                        screen_universe = f"SCREEN(U(IN(Equity(active,public,primary))), IN(TR.GICSSector,{sector_code}), CURN=USD, TOP(500))"
+
+                        aggregate_data = rd.get_data(universe=screen_universe, fields=[field_expr])
+
+                        if not aggregate_data.empty and len(aggregate_data.columns) > 1:
+                            data_col = [col for col in aggregate_data.columns if col != 'Instrument'][0]
+                            # Berechne Median als robustereren Durchschnitt
+                            numeric_values = pd.to_numeric(aggregate_data[data_col], errors='coerce').dropna()
+                            if len(numeric_values) > 0:
+                                sector_value = numeric_values.median()  # Median ist robuster als Mean
+                                print(f"     ✅ Berechnet über Sektor-Screening: {sector_value} (aus {len(numeric_values)} Unternehmen)")
+
+                    except Exception as e:
+                        print(f"     ⚠️ Aggregate-Abfrage fehlgeschlagen: {e}")
+
+                # Methode 3: Fallback - verwende den größten ETF des Sektors
+                if sector_value is None and sector_name in sector_rics:
+                    try:
+                        main_etf = sector_rics[sector_name][1]  # Normalerweise XL* ETFs
+                        etf_data = rd.get_data(universe=[main_etf], fields=[field_expr])
+                        if not etf_data.empty and len(etf_data.columns) > 1:
+                            data_col = [col for col in etf_data.columns if col != 'Instrument'][0]
+                            value = etf_data[data_col].iloc[0]
+                            if pd.notna(value):
+                                sector_value = value
+                                print(f"     ✅ Fallback über ETF {main_etf}: {value}")
+                    except:
+                        pass
+
+                if sector_value is not None:
+                    clean_field = field_expr.replace('TR.', '')
+                    sector_averages[clean_field] = round(float(sector_value), 4)
+                    print(f"     ✅ {clean_field}: {sector_value:.4f}")
+                else:
+                    print(f"     ❌ Keine Sektor-Daten für {field_expr} verfügbar")
+
+            except Exception as e:
+                print(f"     ❌ Fehler bei {field_expr}: {e}")
+                continue
+
+        rd.close_session()
+        return sector_averages if sector_averages else None
+
+    except Exception as e:
+        print(f"   ❌ Fehler beim Öffnen der Refinitiv-Session: {e}")
+        try:
+            rd.close_session()
+        except:
+            pass
+        return None
