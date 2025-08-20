@@ -277,40 +277,162 @@ def process_companies():
             if refinitiv_fields:
                 df_output_with_averages = calculate_refinitiv_averages_by_sector(df_output_with_averages, refinitiv_fields)
 
-            # SCHÖNE FORMATIERUNG UND SPEICHERUNG
-            print(f"\n💾 Speichere formatierte Ausgabe...")
-            save_beautiful_output(df_output_with_averages, output_path)
-
-            # KORRIGIERT: Filtere Output-DataFrame, um nur angeforderte Kennzahlen zu behalten
+            # KORRIGIERT: Filtere Output-DataFrame, um nur angeforderte Kennzahlen zu behalten (WIE IN DER FUNKTIONIERENDEN VERSION)
             print(f"\n🔍 FILTERE OUTPUT AUF NUR ANGEFORDERTE KENNZAHLEN...")
 
-            # Basis-Spalten die immer beibehalten werden
-            base_columns = ['Name', 'RIC', 'GICS Sector', 'GICS\nSektor', 'Sub-Industry', 'Focus', 'Peer_Group_Type', 'Input_Row', 'Sector']
+            # Basis-Spalten die immer beibehalten werden (WIE IN DER FUNKTIONIERENDEN VERSION)
+            base_columns = ['Name', 'RIC', 'GICS Sector', 'Sub-Industry', 'Focus', 'Peer_Group_Type', 'Input_Row']
 
             # Sammle alle erlaubten Spalten
             allowed_columns = base_columns.copy()
+            allowed_columns.extend(excel_fields)  # Angeforderte Excel-Kennzahlen
 
-            # Füge Excel-Kennzahlen hinzu falls vorhanden
-            if excel_fields:
-                allowed_columns.extend(excel_fields)
-
-            # Füge Refinitiv-Kennzahlen hinzu falls vorhanden
-            if refinitiv_fields:
-                for ref_field in refinitiv_fields:
-                    allowed_columns.append(ref_field)  # Original (z.B. TR.EBIT)
-                    clean_field = clean_refinitiv_field_name(ref_field)
-                    allowed_columns.append(clean_field)  # Ohne TR. (z.B. EBIT)
+            # Füge Refinitiv-Kennzahlen hinzu (mit und ohne TR. Präfix)
+            for ref_field in refinitiv_fields:
+                allowed_columns.append(ref_field)  # Original (z.B. TR.EBIT)
+                clean_field = clean_refinitiv_field_name(ref_field)
+                allowed_columns.append(clean_field)  # Ohne TR. (z.B. EBIT)
 
             # Filtere DataFrame auf nur erlaubte Spalten
             existing_allowed_columns = [col for col in allowed_columns if col in df_output_with_averages.columns]
             df_output_cleaned = df_output_with_averages[existing_allowed_columns].copy()
 
+            # KORRIGIERT: Entferne leere Spalten (Spalten mit leerem Namen oder nur leeren Werten)
+            columns_to_keep = []
+            for col in df_output_cleaned.columns:
+                # Überspringe Spalten mit leerem Namen
+                if col == '' or str(col).strip() == '':
+                    continue
+                # Überspringe Spalten die nur leere Werte enthalten
+                if df_output_cleaned[col].isna().all() or (df_output_cleaned[col].astype(str).str.strip() == '').all():
+                    continue
+                columns_to_keep.append(col)
+
+            # Filtere DataFrame auf nur sinnvolle Spalten
+            df_output_cleaned = df_output_cleaned[columns_to_keep].copy()
+
             print(f"   📊 Ursprüngliche Spalten: {len(df_output_with_averages.columns)}")
             print(f"   ✅ Gefilterte Spalten: {len(df_output_cleaned.columns)}")
+            print(f"   🧹 Leere Spalten entfernt: {len(existing_allowed_columns) - len(columns_to_keep)}")
+            print(f"   📋 Behaltene Spalten: {list(df_output_cleaned.columns)}")
 
-            # VEREINFACHTE Excel-Ausgabe die garantiert funktioniert
-            print(f"\n💾 Schreibe {len(df_output_cleaned)} Zeilen nach {output_path}...")
-            df_output_cleaned.to_excel(output_path, index=False)
+            # Erstelle schön formatierte Excel-Datei (WIE IN DER FUNKTIONIERENDEN VERSION)
+            create_beautiful_excel_output(df_output_cleaned, output_path, excel_fields, len(all_results))
+
+            print(f"\n✅ SCHÖN FORMATIERTES OUTPUT GESPEICHERT: {output_path}")
+            print(f"📊 {len(all_results)} Unternehmen + {len(df_output_cleaned) - len(all_results)} Durchschnittswerte = {len(df_output_cleaned)} Zeilen insgesamt mit {len(df_output_cleaned.columns)} Spalten")
+
+            # Zeige Übersicht (WIE IN DER FUNKTIONIERENDEN VERSION)
+            print(f"\n📋 ERGEBNIS-ÜBERSICHT:")
+            for i, result in enumerate(all_results, 1):
+                print(f"\n{i}. {result['Name']} ({result['RIC']}) - {result.get('Input_Row', '')}")
+                print(f"   GICS Sector: {result.get('GICS Sector', 'N/A')}")
+                print(f"   Sub-Industry: {result.get('Sub-Industry', 'N/A')}")
+                print(f"   Focus: {result.get('Focus', 'N/A')}")
+
+                # Zeige alle Excel-Kennzahlen
+                for field in excel_fields:
+                    value = result.get(field, 'N/A')
+                    if value != 'N/A' and pd.notna(value):
+                        print(f"   [Excel] {field}: {value}")
+                    else:
+                        print(f"   [Excel] {field}: ❌ Nicht gefunden")
+
+                # Sammle alle Refinitiv-relevanten Spalten aus dem tatsächlichen DataFrame
+                actual_refinitiv_columns = []
+
+                # 1. Alle ursprünglich angeforderten Refinitiv-Felder
+                for field in refinitiv_fields:
+                    actual_refinitiv_columns.append(field)
+
+                # 2. Alle Spalten im result, die wie Refinitiv-Felder aussehen
+                for key in result.keys():
+                    # Überspringt Basis-Spalten und Excel-Kennzahlen
+                    if key not in ['Name', 'RIC', 'GICS Sector', 'Sub-Industry', 'Focus', 'Peer_Group_Type', 'Input_Row'] and key not in excel_fields:
+                        # Prüft, ob es ein potentielles Refinitiv-Feld ist
+                        if (key.startswith('TR.') or
+                            any(key.upper() == ref_field.replace('TR.', '').upper() for ref_field in refinitiv_fields)):
+                            if key not in actual_refinitiv_columns:
+                                actual_refinitiv_columns.append(key)
+
+                # Entferne Duplikate und behalte Reihenfolge
+                actual_refinitiv_columns = list(dict.fromkeys(actual_refinitiv_columns))
+
+                # Zeige alle gefundenen Refinitiv-Kennzahlen
+                for field in actual_refinitiv_columns:
+                    # Suche nach der Spalte im Result
+                    found_value = None
+                    found_key = None
+
+                    # Direkte Suche nach dem Feld
+                    if field in result:
+                        found_value = result[field]
+                        found_key = field
+                    else:
+                        # Erweiterte Suche für ursprünglich angeforderten Felder
+                        cleaned_field = field.replace("TR.", "") if field.startswith("TR.") else field
+                        if cleaned_field in result:
+                            found_value = result[cleaned_field]
+                            found_key = cleaned_field
+                        else:
+                            # Fuzzy-Suche nach ähnlichen Feldern
+                            for key, value in result.items():
+                                if (field.lower() in key.lower() or
+                                    cleaned_field.lower() in key.lower() or
+                                    key.lower() in field.lower()):
+                                    found_value = value
+                                    found_key = key
+                                    break
+
+                    if found_value is not None and pd.notna(found_value) and str(found_value).strip() != '':
+                        # Bestimme Label für Ausgabe
+                        if field in refinitiv_fields:
+                            display_label = f"[Refinitiv] {field}"
+                        else:
+                            display_label = f"[Refinitiv*] {field}"  # * für neu erstellte Spalten
+
+                        if found_key != field:
+                            print(f"   {display_label} (als '{found_key}'): {found_value}")
+                        else:
+                            print(f"   {display_label}: {found_value}")
+                    else:
+                        print(f"   [Refinitiv] {field}: ❌ Nicht gefunden")
+
+            # Zeige GICS-Sektor-Durchschnitte für Refinitiv-Kennzahlen (WIE IN DER FUNKTIONIERENDEN VERSION)
+            if refinitiv_fields:
+                # Sammle alle Sektor-Durchschnitte aus dem DataFrame
+                sector_avg_rows = df_output_cleaned[df_output_cleaned['Name'].str.contains('🏭 Ø', na=False)]
+
+                if not sector_avg_rows.empty:
+                    print(f"\n🏭 GICS-SEKTOR-DURCHSCHNITTE (REFINITIV):")
+                    for _, sector_row in sector_avg_rows.iterrows():
+                        sector_name = sector_row['Name'].replace('🏭 Ø ', '')
+                        print(f"\n📊 {sector_name}:")
+                        for field in refinitiv_fields:
+                            clean_field = clean_refinitiv_field_name(field)
+                            # Suche nach dem Wert in der Sektor-Zeile
+                            value = None
+                            for possible_key in [field, clean_field, field.replace('TR.', ''), clean_field]:
+                                try:
+                                    # KORRIGIERT: Verwende hasattr und direkten Zugriff auf Series
+                                    if hasattr(sector_row, possible_key) and pd.notna(getattr(sector_row, possible_key, None)):
+                                        potential_value = getattr(sector_row, possible_key)
+                                        if str(potential_value).strip() != '':
+                                            value = potential_value
+                                            break
+                                    # Alternative: Verwende Dictionary-ähnlichen Zugriff
+                                    elif possible_key in sector_row and pd.notna(sector_row[possible_key]):
+                                        potential_value = sector_row[possible_key]
+                                        if str(potential_value).strip() != '':
+                                            value = potential_value
+                                            break
+                                except (KeyError, ValueError, AttributeError):
+                                    continue
+
+                            if value is not None:
+                                print(f"   📈 {field}: {value:,.4f} (Sektor-Durchschnitt)")
+                            else:
+                                print(f"   📈 {field}: ❌ Nicht verfügbar")
 
             end_time = time.time()
             print(f"\n🎉 PEER-GROUP-ANALYSE ERFOLGREICH! Ausführungszeit: {end_time - start_time:.1f}s")
@@ -1041,7 +1163,7 @@ def calculate_refinitiv_averages_by_sector(df, refinitiv_fields):
 
             # Suche nach dem Wert in den Sektor-Daten
             value = None
-            for possible_key in [field, clean_field, field.replace('TR.', ''), clean_field.replace('(', '').replace(')', '')]:
+            for possible_key in [field, clean_field, field.replace('TR.', ''), clean_field]:
                 if possible_key in sector_data:
                     value = sector_data[possible_key]
                     break
