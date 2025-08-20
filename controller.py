@@ -285,7 +285,7 @@ def process_companies():
             print(f"\n🔍 FILTERE OUTPUT AUF NUR ANGEFORDERTE KENNZAHLEN...")
 
             # Basis-Spalten die immer beibehalten werden
-            base_columns = ['Name', 'RIC', 'GICS\nSektor', 'Sub-Industry', 'Focus', 'Peer_Group_Type', 'Input_Row', 'Sector']
+            base_columns = ['Name', 'RIC', 'GICS Sector', 'GICS\nSektor', 'Sub-Industry', 'Focus', 'Peer_Group_Type', 'Input_Row', 'Sector']
 
             # Sammle alle erlaubten Spalten
             allowed_columns = base_columns.copy()
