@@ -602,4 +602,3 @@ def get_all_sector_averages(used_sectors, refinitiv_fields):
             print("✅ Refinitiv-Session geschlossen")
         except:
             pass
-

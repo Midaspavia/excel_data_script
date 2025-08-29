@@ -1,6 +1,6 @@
 import os
 import pandas as pd
-from excel_kennzahlen import fetch_excel_kennzahlen_by_ric, fetch_excel_kennzahlen_by_ric_filtered, clear_excel_cache
+from excel_kennzahlen import fetch_excel_kennzahlen_by_ric, fetch_excel_kennzahlen_by_ric_filtered, fetch_excel_kennzahlen_batch, clear_excel_cache
 from refinitiv_integration import get_refinitiv_kennzahlen_for_companies, get_all_sector_averages
 import glob
 from openpyxl import load_workbook
@@ -193,31 +193,35 @@ def process_companies():
 
             print(f"     ✅ {peer_group_type}-Peer-Gruppe: {len(peer_companies)} Unternehmen")
 
-            # 5. VERARBEITE PEER-GRUPPE MIT OPTIMIERTER EXCEL-KENNZAHLEN-LOGIK
+            # 5. VERARBEITE PEER-GRUPPE MIT BATCH-OPTIMIERUNG
             peer_results = []
+
+            # OPTIMIERUNG: Sammle alle RICs für Batch-Verarbeitung
+            all_rics_in_group = [company['RIC'] for company in peer_companies]
+
+            # OPTIMIERUNG: Hole alle Excel-Kennzahlen in einem Batch (NEU!)
+            all_excel_data = {}
+            if excel_fields and all_rics_in_group:
+                print(f"     📊 Hole Excel-Kennzahlen für {len(all_rics_in_group)} Unternehmen in einem Batch...")
+                # Verwende GICS Sector-Filter falls verfügbar
+                gics_filter = [input_company['gics_sector']] if input_company.get('gics_sector') else None
+                all_excel_data = fetch_excel_kennzahlen_batch(all_rics_in_group, excel_fields, gics_filter)
+
+            # OPTIMIERUNG: Hole alle Refinitiv-Daten in einem einzigen API-Call
+            all_refinitiv_data = {}
+            if refinitiv_fields and all_rics_in_group:
+                print(f"     📊 Hole Refinitiv-Daten für {len(all_rics_in_group)} Unternehmen in einem Batch...")
+                company_list_batch = [{'RIC': ric} for ric in all_rics_in_group]
+                all_refinitiv_data = get_refinitiv_kennzahlen_for_companies(company_list_batch, refinitiv_fields)
 
             for j, company in enumerate(peer_companies, 1):
                 print(f"     🏢 {j}/{len(peer_companies)}: {company['Name']}")
 
-                # Excel-Kennzahlen (BEIBEHALTENE OPTIMIERTE LOGIK)
-                excel_data = {}
-                if excel_fields:
-                    # Verwende GICS Sector-Filter falls verfügbar
-                    gics_filter = [input_company['gics_sector']] if input_company.get('gics_sector') else None
-                    excel_data = fetch_excel_kennzahlen_by_ric_filtered(
-                        company['RIC'],
-                        excel_fields,
-                        gics_sectors=gics_filter
-                    )
+                # Excel-Kennzahlen (OPTIMIERT: Verwende Batch-Daten)
+                excel_data = all_excel_data.get(company['RIC'], {})
 
-                # Refinitiv-Kennzahlen
-                refinitiv_data = {}
-                if refinitiv_fields:
-                    # KORRIGIERT: Übergebe Company-Dictionary statt nur RIC-String
-                    company_list = [{'RIC': company['RIC']}]
-                    refinitiv_result = get_refinitiv_kennzahlen_for_companies(company_list, refinitiv_fields)
-                    if company['RIC'] in refinitiv_result:
-                        refinitiv_data = refinitiv_result[company['RIC']]
+                # Refinitiv-Kennzahlen (OPTIMIERT: Verwende Batch-Daten)
+                refinitiv_data = all_refinitiv_data.get(company['RIC'], {})
 
                 # Bestimme GICS Sektor für das Unternehmen
                 gics_sector = determine_gics_sector(company['RIC'])
@@ -398,7 +402,7 @@ def process_companies():
                     else:
                         print(f"   [Refinitiv] {field}: ❌ Nicht gefunden")
 
-            # Zeige GICS-Sektor-Durchschnitte für Refinitiv-Kennzahlen (WIE IN DER FUNKTIONIERENDEN VERSION)
+            # Zeige GICS-Sektor-Durchschnitte für Refinitiv-Kennzahlen (VEREINFACHT)
             if refinitiv_fields:
                 # Sammle alle Sektor-Durchschnitte aus dem DataFrame
                 sector_avg_rows = df_output_cleaned[df_output_cleaned['Name'].str.contains('🏭 Ø', na=False)]
@@ -408,35 +412,53 @@ def process_companies():
                     for _, sector_row in sector_avg_rows.iterrows():
                         sector_name = sector_row['Name'].replace('🏭 Ø ', '')
                         print(f"\n📊 {sector_name}:")
+
+                        # Sammle nur verfügbare Kennzahlen für diesen Sektor
+                        available_values = []
+
                         for field in refinitiv_fields:
                             clean_field = clean_refinitiv_field_name(field)
-                            # Suche nach dem Wert in der Sektor-Zeile
+
+                            # VEREINFACHTE SUCHE: Prüfe direkt die wahrscheinlichsten Spaltennamen
                             value = None
-                            for possible_key in [field, clean_field, field.replace('TR.', ''), clean_field]:
-                                try:
-                                    # KORRIGIERT: Verwende hasattr und direkten Zugriff auf Series
-                                    if hasattr(sector_row, possible_key) and pd.notna(getattr(sector_row, possible_key, None)):
-                                        potential_value = getattr(sector_row, possible_key)
-                                        if str(potential_value).strip() != '':
-                                            value = potential_value
-                                            break
-                                    # Alternative: Verwende Dictionary-ähnlichen Zugriff
-                                    elif possible_key in sector_row and pd.notna(sector_row[possible_key]):
-                                        potential_value = sector_row[possible_key]
-                                        if str(potential_value).strip() != '':
-                                            value = potential_value
-                                            break
-                                except (KeyError, ValueError, AttributeError):
-                                    continue
+                            possible_keys = [clean_field, field, field.replace('TR.', '')]
 
+                            for possible_key in possible_keys:
+                                if possible_key in sector_row.index:
+                                    potential_value = sector_row[possible_key]
+                                    if pd.notna(potential_value) and str(potential_value).strip() != '':
+                                        try:
+                                            # Versuche als numerischen Wert zu behandeln
+                                            value = float(potential_value)
+                                            break
+                                        except (ValueError, TypeError):
+                                            # Falls nicht numerisch, verwende den String-Wert
+                                            if str(potential_value).strip() != '':
+                                                value = potential_value
+                                                break
+
+                            # Nur verfügbare Werte sammeln und anzeigen
                             if value is not None:
-                                print(f"   📈 {field}: {value:,.4f} (Sektor-Durchschnitt)")
-                            else:
-                                print(f"   📈 {field}: ❌ Nicht verfügbar")
+                                available_values.append((field, value))
 
+                        # Zeige nur verfügbare Kennzahlen
+                        if available_values:
+                            for field, value in available_values:
+                                try:
+                                    # Versuche numerische Formatierung
+                                    if isinstance(value, (int, float)):
+                                        print(f"   📈 {field}: {value:,.4f} (Sektor-Durchschnitt)")
+                                    else:
+                                        print(f"   📈 {field}: {value} (Sektor-Durchschnitt)")
+                                except:
+                                    print(f"   📈 {field}: {value} (Sektor-Durchschnitt)")
+                        else:
+                            print(f"   ⚠️ Keine Refinitiv-Durchschnitte für {sector_name} verfügbar")
+                            # DEBUG: Zeige verfügbare Spalten
+                            print(f"   🔍 DEBUG: Verfügbare Spalten für {sector_name}: {list(sector_row.index)}")
             end_time = time.time()
             print(f"\n🎉 PEER-GROUP-ANALYSE ERFOLGREICH! Ausführungszeit: {end_time - start_time:.1f}s")
-            print(f"📊 Ergebnisse: {len(all_results)} Unternehmen in verschiedenen Peer-Gruppen")
+            print(f"�� Ergebnisse: {len(all_results)} Unternehmen in verschiedenen Peer-Gruppen")
 
             # Zeige Zusammenfassung der Peer-Gruppen
             focus_companies = [r for r in all_results if r.get('Peer_Group_Type') == 'Focus']

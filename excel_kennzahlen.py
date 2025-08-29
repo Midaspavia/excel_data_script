@@ -510,3 +510,91 @@ def fetch_excel_kennzahlen_by_ric(ric: str, fields: list) -> dict:
     Suche Kennzahlen direkt über RIC ohne GICS Sector-Filter
     """
     return fetch_excel_kennzahlen_by_ric_filtered(ric, fields, gics_sectors=None)
+
+def fetch_excel_kennzahlen_batch(rics, excel_fields, gics_sectors=None):
+    """
+    OPTIMIERTE BATCH-FUNKTION: Hole Excel-Kennzahlen für mehrere RICs in einem Durchgang
+    """
+    print(f"📊 BATCH-VERARBEITUNG: {len(rics)} RICs für {len(excel_fields)} Excel-Kennzahlen")
+
+    # Verwende den Sector-Filter für Datei-Auswahl
+    if gics_sectors:
+        gics_sectors_tuple = tuple(gics_sectors)
+        file_paths = get_sector_excel_files(gics_sectors_tuple)
+    else:
+        file_paths = get_sector_excel_files(None)
+
+    # Lade alle relevanten Excel-Dateien einmalig in den Cache
+    load_excel_files_once(file_paths)
+
+    # Sammle alle Ergebnisse
+    all_results = {}
+
+    # Verarbeite alle RICs in einem Durchgang
+    for ric in rics:
+        ric_results = {}
+
+        # Durchsuche alle gecachten Dateien
+        for file_path in file_paths:
+            if file_path not in _excel_cache:
+                continue
+
+            file_cache = _excel_cache[file_path]
+
+            for sheet_name, df_raw in file_cache.items():
+                # Überspringe irrelevante Sheets
+                if not any(pattern in sheet_name.lower() for pattern in ["equity", "key", "revenue", "profitability", "financial", "growth", "figures"]):
+                    continue
+
+                try:
+                    # Finde RIC in der Datei (ohne erneutes Laden)
+                    if len(df_raw.columns) < 5:
+                        continue
+
+                    # Suche nach dem RIC in Spalte E (Index 4)
+                    ric_column_data = df_raw.iloc[:, 4].astype(str).str.upper().str.strip()
+                    matching_rows = ric_column_data == ric.upper().strip()
+
+                    if not matching_rows.any():
+                        continue
+
+                    # RIC gefunden - hole Kennzahlen
+                    for field in excel_fields:
+                        if field in ric_results:
+                            continue  # Bereits gefunden
+
+                        # Suche Header in verschiedenen Zeilen
+                        for header_row in [2, 3]:  # Zeile 3 und 4 (0-basiert: 2 und 3)
+                            if header_row >= len(df_raw):
+                                continue
+
+                            headers = df_raw.iloc[header_row].astype(str).str.strip()
+
+                            # Exakte Übereinstimmung
+                            if field in headers.values:
+                                col_idx = headers[headers == field].index[0]
+
+                                # Hole Wert aus der entsprechenden Zeile
+                                matching_row_idx = matching_rows[matching_rows].index[0]
+
+                                if matching_row_idx < len(df_raw):
+                                    value = df_raw.iloc[matching_row_idx, col_idx]
+
+                                    if pd.notna(value) and str(value).strip() not in ['', 'nan', 'None']:
+                                        ric_results[field] = value
+                                        break
+
+                        if field in ric_results:
+                            break  # Kennzahl gefunden, nächste Kennzahl
+
+                except Exception as e:
+                    continue
+
+        all_results[ric] = ric_results
+        if ric_results:
+            print(f"     ✅ {ric}: {len(ric_results)}/{len(excel_fields)} Kennzahlen gefunden")
+        else:
+            print(f"     ❌ {ric}: Keine Kennzahlen gefunden")
+
+    print(f"📊 BATCH-ERGEBNIS: {len([r for r in all_results.values() if r])} von {len(rics)} RICs mit Daten")
+    return all_results
