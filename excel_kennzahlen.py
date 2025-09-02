@@ -532,6 +532,7 @@ def fetch_excel_kennzahlen_batch(rics, excel_fields, gics_sectors=None):
 
     # Verarbeite alle RICs in einem Durchgang
     for ric in rics:
+        # KORRIGIERT: Verwende die gleiche Logik wie die funktionierende Einzelfunktion
         ric_results = {}
 
         # Durchsuche alle gecachten Dateien
@@ -542,52 +543,74 @@ def fetch_excel_kennzahlen_batch(rics, excel_fields, gics_sectors=None):
             file_cache = _excel_cache[file_path]
 
             for sheet_name, df_raw in file_cache.items():
-                # Überspringe irrelevante Sheets
-                if not any(pattern in sheet_name.lower() for pattern in ["equity", "key", "revenue", "profitability", "financial", "growth", "figures"]):
+                # Verwende das gleiche Sheet-Filter wie die Einzelfunktion
+                relevant_sheets = ["equity", "key", "revenue", "profitability", "financial", "growth", "figures", "performance"]
+                if not any(pattern in sheet_name.lower() for pattern in relevant_sheets):
                     continue
 
                 try:
-                    # Finde RIC in der Datei (ohne erneutes Laden)
+                    # KORRIGIERT: Verwende die gleiche RIC-Suchlogik wie die Einzelfunktion
                     if len(df_raw.columns) < 5:
                         continue
 
                     # Suche nach dem RIC in Spalte E (Index 4)
-                    ric_column_data = df_raw.iloc[:, 4].astype(str).str.upper().str.strip()
-                    matching_rows = ric_column_data == ric.upper().strip()
+                    ric_column_data = df_raw.iloc[:, 4].astype(str).str.strip()
 
-                    if not matching_rows.any():
+                    # Finde alle Zeilen mit diesem RIC
+                    ric_matches = []
+                    for idx, cell_value in enumerate(ric_column_data):
+                        if pd.notna(cell_value) and str(cell_value).strip().upper() == ric.upper().strip():
+                            ric_matches.append(idx)
+
+                    if not ric_matches:
                         continue
 
-                    # RIC gefunden - hole Kennzahlen
+                    # RIC gefunden - hole Kennzahlen für jedes Excel-Feld
                     for field in excel_fields:
                         if field in ric_results:
                             continue  # Bereits gefunden
 
-                        # Suche Header in verschiedenen Zeilen
-                        for header_row in [2, 3]:  # Zeile 3 und 4 (0-basiert: 2 und 3)
-                            if header_row >= len(df_raw):
+                        # KORRIGIERT: Suche Header in verschiedenen Zeilen (gleiche Logik wie Einzelfunktion)
+                        for header_row_idx in [2, 3]:  # Zeilen 3 und 4 (0-basiert: 2 und 3)
+                            if header_row_idx >= len(df_raw):
                                 continue
 
-                            headers = df_raw.iloc[header_row].astype(str).str.strip()
+                            # Hole Header-Zeile
+                            headers = df_raw.iloc[header_row_idx].astype(str).str.strip()
 
-                            # Exakte Übereinstimmung
-                            if field in headers.values:
-                                col_idx = headers[headers == field].index[0]
+                            # Suche nach exakter Übereinstimmung
+                            matching_header_cols = []
+                            for col_idx, header_value in enumerate(headers):
+                                if pd.notna(header_value) and str(header_value).strip() == field.strip():
+                                    matching_header_cols.append(col_idx)
 
-                                # Hole Wert aus der entsprechenden Zeile
-                                matching_row_idx = matching_rows[matching_rows].index[0]
+                            if not matching_header_cols:
+                                continue
 
-                                if matching_row_idx < len(df_raw):
-                                    value = df_raw.iloc[matching_row_idx, col_idx]
+                            # Hole Werte für alle gefundenen RIC-Zeilen
+                            for ric_row_idx in ric_matches:
+                                for header_col_idx in matching_header_cols:
+                                    if ric_row_idx < len(df_raw) and header_col_idx < len(df_raw.columns):
+                                        value = df_raw.iloc[ric_row_idx, header_col_idx]
 
-                                    if pd.notna(value) and str(value).strip() not in ['', 'nan', 'None']:
-                                        ric_results[field] = value
-                                        break
+                                        # KORRIGIERT: Gleiche Wert-Validierung wie Einzelfunktion
+                                        if pd.notna(value) and str(value).strip() not in ['', 'nan', 'None']:
+                                            # Prüfe auf Fehlermeldungen
+                                            if "The record could not be found" in str(value):
+                                                continue
 
-                        if field in ric_results:
-                            break  # Kennzahl gefunden, nächste Kennzahl
+                                            ric_results[field] = value
+                                            print(f"     ✅ {ric}: Gefunden {field} = {value}")
+                                            break
+
+                                if field in ric_results:
+                                    break
+
+                            if field in ric_results:
+                                break
 
                 except Exception as e:
+                    # Stille Behandlung von Fehlern, wie in der Einzelfunktion
                     continue
 
         all_results[ric] = ric_results
