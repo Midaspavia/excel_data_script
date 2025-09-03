@@ -93,7 +93,6 @@ Das Programm funktioniert vollständig und erfüllt alle Hauptanforderungen:
 | 2.1.3 | Verschobene Spalten | RIC nicht in Spalte E | Alternative Spalten-Suche | ✅ |
 | 2.1.4 | Leere Excel-Datei | Nur Header, keine Daten | Leere Ergebnisse | ✅ |
 | 2.1.5 | Korrupte Excel-Datei | Nicht lesbare Datei | Fehlerbehandlung | ✅ |
-| 2.1.6 | Passwort-geschützte Excel | Passwort erforderlich | Fehlerbehandlung | ⏳ |
 | 2.1.7 | Excel mit vielen Sheets | 10+ Worksheets | Korrekte Sheet-Auswahl | ✅ |
 | 2.1.8 | Excel mit Sonderzeichen im Namen | "Tëst_Dätä.xlsx" | Korrekte Datei-Behandlung | ✅ |
 | 2.1.9 | Sehr große Excel-Dateien | 100k+ Zeilen | Performance-Test | ⏳ |

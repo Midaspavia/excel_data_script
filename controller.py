@@ -15,6 +15,19 @@ warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 
 DATA_DIR = "excel_data/data"
 
+# 🚀 PERFORMANCE-OPTIMIERUNG: Globale Caches zur Vermeidung doppelter Abfragen
+_COMPANY_CACHE = {}  # Cache für Sub-Industry/Focus-Gruppen
+_EXCEL_KENNZAHLEN_CACHE = {}  # Cache für bereits abgerufene Excel-Kennzahlen
+_SESSION_PROCESSED_GROUPS = set()  # Verhindert doppelte Verarbeitung derselben Gruppen
+
+def clear_all_caches():
+    """Leert alle Performance-Caches zu Beginn einer neuen Session"""
+    global _COMPANY_CACHE, _EXCEL_KENNZAHLEN_CACHE, _SESSION_PROCESSED_GROUPS
+    _COMPANY_CACHE.clear()
+    _EXCEL_KENNZAHLEN_CACHE.clear()
+    _SESSION_PROCESSED_GROUPS.clear()
+    print("🧹 Performance-Caches geleert")
+
 def clean_refinitiv_field_name(field_name):
     """
     Entfernt TR. aus Refinitiv-Feldnamen, behält aber Period-Information bei
@@ -50,6 +63,9 @@ def process_companies():
     print("🚀 STARTE OPTIMIERTE VERARBEITUNG...")
 
     try:
+        # 🚀 PERFORMANCE-OPTIMIERUNG: Leere Caches zu Beginn jeder Session
+        clear_all_caches()
+
         # 1. Lese input_user.xlsx (SCHNELL)
         print("📖 Lese input_user.xlsx...")
         df_input = pd.read_excel("excel_data/input_user.xlsx")
@@ -962,7 +978,7 @@ def create_beautiful_excel_output(df, output_path, excel_fields, actual_company_
     print(f"  💾 Datei gespeichert: {output_path}")
 
 def calculate_excel_averages(df, excel_fields):
-    """Berechnet die Durchschnitte für Excel-Kennzahlen nach Sub-Industry und Focus-Gruppen"""
+    """🚀 OPTIMIERTE VERSION: Berechnet die Durchschnitte für Excel-Kennzahlen nach Sub-Industry und Focus-Gruppen (mit Caching)"""
     print("🔢 BERECHNE DURCHSCHNITTE FÜR EXCEL-KENNZAHLEN...")
 
     # Filtere nur die Spalten, die mit Excel-Kennzahlen gefüllt sind
@@ -979,7 +995,7 @@ def calculate_excel_averages(df, excel_fields):
     for col in excel_columns:
         df_numeric[col] = pd.to_numeric(df_numeric[col], errors='coerce')
 
-    # 1. SUB-INDUSTRY DURCHSCHNITTE (ALLE UNTERNEHMEN AUS DEN EXCEL-DATEIEN)
+    # 1. SUB-INDUSTRY DURCHSCHNITTE (🚀 OPTIMIERT: Verwende Caching)
     print("   🏭 Berechne Sub-Industry Durchschnitte (alle verfügbaren Unternehmen)...")
 
     # Hole alle eindeutigen Sub-Industries aus dem Output
@@ -989,19 +1005,20 @@ def calculate_excel_averages(df, excel_fields):
         if sub_industry and sub_industry.strip():
             print(f"     🔍 Suche alle Unternehmen der Sub-Industry: '{sub_industry}'")
 
-            # Hole ALLE Unternehmen dieser Sub-Industry aus den Excel-Dateien
-            all_companies_in_sub_industry = find_companies_by_sub_industry(sub_industry)
+            # 🚀 OPTIMIERT: Verwende Cached-Version
+            all_companies_in_sub_industry = find_companies_by_sub_industry_cached(sub_industry)
 
             if len(all_companies_in_sub_industry) > 1:
                 # Sammle Excel-Kennzahlen für ALLE Unternehmen der Sub-Industry
                 all_sub_industry_data = []
-                print(f"       �� Verarbeite {len(all_companies_in_sub_industry)} Unternehmen...")
+                print(f"       💾 Verarbeite {len(all_companies_in_sub_industry)} Unternehmen...")
 
                 for i, company in enumerate(all_companies_in_sub_industry, 1):
                     if i <= 5 or i % 20 == 0:  # Zeige nur jeden 20. nach den ersten 5
                         print(f"         {i}/{len(all_companies_in_sub_industry)}: {company['Name']}")
 
-                    company_data = get_kennzahlen_for_company(company['RIC'], excel_columns)
+                    # 🚀 OPTIMIERT: Verwende Cached-Version
+                    company_data = get_kennzahlen_for_company_cached(company['RIC'], excel_columns)
                     if company_data:
                         # Füge Basis-Informationen hinzu
                         company_data.update({
@@ -1049,7 +1066,7 @@ def calculate_excel_averages(df, excel_fields):
             else:
                 print(f"   ⚠️ Zu wenige Unternehmen für Sub-Industry: {sub_industry} (gefunden: {len(all_companies_in_sub_industry)})")
 
-    # 2. FOCUS DURCHSCHNITTE (NUR FÜR FOCUS-GRUPPEN)
+    # 2. FOCUS DURCHSCHNITTE (🚀 OPTIMIERT: Verwende Caching)
     print("   🎯 Berechne Focus Durchschnitte (nur für Gruppen mit Fokus)...")
 
     # Filtere nur die Zeilen mit vorhandenen Fokus-Werten
@@ -1063,19 +1080,20 @@ def calculate_excel_averages(df, excel_fields):
             if focus and focus.strip():
                 print(f"     🔍 Suche alle Unternehmen mit Fokus: '{focus}'")
 
-                # Hole ALLE Unternehmen mit diesem Fokus aus den Excel-Dateien
-                all_companies_with_focus = find_companies_by_focus(focus)
+                # 🚀 OPTIMIERT: Verwende Cached-Version
+                all_companies_with_focus = find_companies_by_focus_cached(focus)
 
                 if len(all_companies_with_focus) > 1:
                     # Sammle Excel-Kennzahlen für ALLE Unternehmen mit diesem Fokus
                     all_focus_data = []
-                    print(f"       �� Verarbeite {len(all_companies_with_focus)} Unternehmen...")
+                    print(f"       💾 Verarbeite {len(all_companies_with_focus)} Unternehmen...")
 
                     for i, company in enumerate(all_companies_with_focus, 1):
                         if i <= 5 or i % 20 == 0:  # Zeige nur jeden 20. nach den ersten 5
                             print(f"         {i}/{len(all_companies_with_focus)}: {company['Name']}")
 
-                        company_data = get_kennzahlen_for_company(company['RIC'], excel_columns)
+                        # 🚀 OPTIMIERT: Verwende Cached-Version
+                        company_data = get_kennzahlen_for_company_cached(company['RIC'], excel_columns)
                         if company_data:
                             # Füge Basis-Informationen hinzu
                             company_data.update({
@@ -1290,6 +1308,14 @@ def save_beautiful_output(df, output_path):
                         potential_sector = "Real Estate"
                     elif "Utilities" in file:
                         potential_sector = "Utilities"
+                    elif "Energy" in file:
+                        potential_sector = "Energy"
+                    elif "Financial" in file or "Bank" in file:
+                        potential_sector = "Financials"
+                    elif "Industrial" in file or "Manufacturing" in file:
+                        potential_sector = "Industrials"
+                    elif "Communication" in file or "Telecom" in file or "Media" in file:
+                        potential_sector = "Communication Services"
                     else:
                         continue
 
@@ -1344,6 +1370,14 @@ def save_beautiful_output(df, output_path):
                                     check_sector = "Real Estate"
                                 elif "Utilities" in file:
                                     check_sector = "Utilities"
+                                elif "Energy" in file:
+                                    check_sector = "Energy"
+                                elif "Financial" in file or "Bank" in file:
+                                    check_sector = "Financials"
+                                elif "Industrial" in file or "Manufacturing" in file:
+                                    check_sector = "Industrials"
+                                elif "Communication" in file or "Telecom" in file or "Media" in file:
+                                    check_sector = "Communication Services"
                                 else:
                                     continue
 
@@ -1583,6 +1617,14 @@ def determine_gics_sector(ric):
             sector = "Real Estate"
         elif "Utilities" in file:
             sector = "Utilities"
+        elif "Energy" in file:
+            sector = "Energy"
+        elif "Financial" in file or "Bank" in file:
+            sector = "Financials"
+        elif "Industrial" in file or "Manufacturing" in file:
+            sector = "Industrials"
+        elif "Communication" in file or "Telecom" in file or "Media" in file:
+            sector = "Communication Services"
         else:
             continue
 
@@ -1626,3 +1668,51 @@ def fetch_refinitiv_sector_averages(sector_name, refinitiv_fields):
     # Diese Funktion delegiert an die neue Implementierung in refinitiv_integration.py
     from refinitiv_integration import fetch_refinitiv_sector_averages as new_fetch_function
     return new_fetch_function(sector_name, refinitiv_fields)
+
+def find_companies_by_focus_cached(focus):
+    """🚀 OPTIMIERTE VERSION: Suche alle Unternehmen mit gleichem Focus (mit Caching)"""
+    global _COMPANY_CACHE
+
+    cache_key = f"focus_{focus}"
+    if cache_key in _COMPANY_CACHE:
+        print(f"🔄 Cache-Hit für Focus '{focus}': {len(_COMPANY_CACHE[cache_key])} Unternehmen")
+        return _COMPANY_CACHE[cache_key]
+
+    # Falls nicht im Cache, normale Suche durchführen
+    companies = find_companies_by_focus(focus)
+    _COMPANY_CACHE[cache_key] = companies
+    print(f"💾 Focus '{focus}' in Cache gespeichert: {len(companies)} Unternehmen")
+    return companies
+
+def find_companies_by_sub_industry_cached(sub_industry):
+    """🚀 OPTIMIERTE VERSION: Suche alle Unternehmen mit gleicher Sub-Industry (mit Caching)"""
+    global _COMPANY_CACHE
+
+    cache_key = f"sub_industry_{sub_industry}"
+    if cache_key in _COMPANY_CACHE:
+        print(f"🔄 Cache-Hit für Sub-Industry '{sub_industry}': {len(_COMPANY_CACHE[cache_key])} Unternehmen")
+        return _COMPANY_CACHE[cache_key]
+
+    # Falls nicht im Cache, normale Suche durchführen
+    companies = find_companies_by_sub_industry(sub_industry)
+    _COMPANY_CACHE[cache_key] = companies
+    print(f"💾 Sub-Industry '{sub_industry}' in Cache gespeichert: {len(companies)} Unternehmen")
+    return companies
+
+def get_kennzahlen_for_company_cached(ric, fields):
+    """🚀 OPTIMIERTE VERSION: Sammelt Kennzahlen für ein Unternehmen (mit Caching)"""
+    global _EXCEL_KENNZAHLEN_CACHE
+
+    # Erstelle eindeutigen Cache-Key
+    fields_key = "_".join(sorted(fields))
+    cache_key = f"{ric}_{fields_key}"
+
+    if cache_key in _EXCEL_KENNZAHLEN_CACHE:
+        print(f"🔄 Cache-Hit für RIC '{ric}': Excel-Kennzahlen bereits vorhanden")
+        return _EXCEL_KENNZAHLEN_CACHE[cache_key]
+
+    # Falls nicht im Cache, normale Kennzahlen-Abfrage
+    kennzahlen = get_kennzahlen_for_company(ric, fields)
+    _EXCEL_KENNZAHLEN_CACHE[cache_key] = kennzahlen
+    return kennzahlen
+
