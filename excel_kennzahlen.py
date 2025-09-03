@@ -109,7 +109,7 @@ def load_excel_files_once(file_paths):
 
 def fetch_excel_kennzahlen_by_ric_filtered(ric: str, fields: list, gics_sectors=None) -> dict:
     """
-    VEREINFACHT: Suche Kennzahlen direkt über RIC mit einfachem Header-Vergleich
+    KORRIGIERT: Suche Kennzahlen direkt über RIC mit exakter Header-Übereinstimmung
     """
     result = {}
 
@@ -129,11 +129,11 @@ def fetch_excel_kennzahlen_by_ric_filtered(ric: str, fields: list, gics_sectors=
 
             for sheet_name in xls.sheet_names:
                 # Priorisiere bestimmte Sheet-Namen
-                if not any(keyword in sheet_name.lower() for keyword in ['equity', 'key', 'figures', 'data']):
+                if not any(keyword in sheet_name.lower() for keyword in ['equity', 'key', 'figures', 'data', 'working', 'capital', 'stability', 'cashflow']):
                     continue
 
                 try:
-                    # KORRIGIERT: Finde die richtige Header-Zeile dynamisch
+                    # Finde die richtige Header-Zeile dynamisch
                     df_raw = pd.read_excel(file_path, sheet_name=sheet_name, header=None)
 
                     # Suche nach Header-Zeile mit RIC
@@ -166,110 +166,103 @@ def fetch_excel_kennzahlen_by_ric_filtered(ric: str, fields: list, gics_sectors=
 
                     # Verwende die erste passende Zeile
                     matched_row = matching_rows.iloc[0]
-                    print(f"✅ RIC {ric} gefunden in {os.path.basename(file_path)} -> {sheet_name}")
+                    print(f"✅ RIC {ric} gefunden in {os.path.basename(file_path)} → {sheet_name}")
 
                     # Sammle alle gewünschten Felder aus dieser Zeile
                     for field in fields:
                         if field in result:
                             continue  # Bereits gefunden
 
-                        # KORRIGIERT: Bereinige Feldname von Zeilenumbrüchen
+                        # KORRIGIERT: Bereinige Feldname von Zeilenumbrüchen für Suche
                         clean_field = field.replace('\n', ' ').replace('\r', ' ').strip()
 
-                        # Suche nach exakter Übereinstimmung oder bereinigter Version
-                        search_fields = [field, clean_field]
-
                         found = False
-                        for search_field in search_fields:
-                            if search_field in df.columns:
-                                value = matched_row[search_field]
+                        found_value = None
 
-                                # Verbesserte Überprüfung: Stelle sicher, dass der Wert nicht ein RIC-Code oder Fehlermeldung ist
-                                if pd.notna(value) and str(value).strip() != "":
-                                    str_value = str(value).strip().upper()
+                        # 1. EXAKTE ÜBEREINSTIMMUNG (höchste Priorität)
+                        if field in df.columns:
+                            value = matched_row[field]
+                            if pd.notna(value) and str(value).strip() != "":
+                                found_value = value
+                                found = True
+                                print(f"✅ Exakte Übereinstimmung: {field} = {value}")
 
-                                    # Prüfe auf Fehlermeldungen ZUERST
-                                    error_messages = [
-                                        "THE RECORD COULD NOT BE FOUND",
-                                        "ERROR CODE: 0",
-                                        "NO DATA AVAILABLE",
-                                        "DATA NOT AVAILABLE",
-                                        "N/A",
-                                        "#N/A",
-                                        "#ERROR",
-                                        "NULL"
-                                    ]
-
-                                    # Wenn eine Fehlermeldung enthalten ist, setze leeren Wert
-                                    is_error_message = any(error_msg in str_value for error_msg in error_messages)
-
-                                    if is_error_message:
-                                        print(f"⚠️ Fehlermeldung '{value}' erkannt, setze leeren Wert")
-                                        result[field] = ""  # Leerer String
-                                        found = True
-                                        break
-
-                                    # Prüfe ob der Wert wie ein RIC aussieht (nur für echte RIC-Codes)
-                                    is_ric_like = (
-                                        # Exakter Match mit dem gesuchten RIC
-                                        str_value == ric.upper().strip() or
-                                        # Andere typische RIC-Muster (Buchstaben + Punkt + Buchstabe)
-                                        bool(re.match(r'^[A-Z]{1,6}\.[A-Z]{1,3}$', str_value)) or
-                                        # Nur Buchstaben ohne Punkt (wie "APD", "CLN")
-                                        (bool(re.match(r'^[A-Z]{1,6}$', str_value)) and len(str_value) <= 6)
-                                    )
-
-                                    if not is_ric_like:
-                                        result[field] = value
-                                        print(f"✅ Gefunden: {search_field} = {value}")
-                                        found = True
-                                        break
-                                    else:
-                                        print(f"⚠️ Wert '{value}' sieht wie ein RIC aus, überspringe")
-
-                        # Wenn nicht gefunden, erweiterte Suche
+                        # 2. BEREINIGTE ÜBEREINSTIMMUNG (ohne Zeilenumbrüche)
                         if not found:
-                            # Suche nach ähnlichen Spalten (ohne Zeilenumbrüche)
+                            for col in df.columns:
+                                col_clean = str(col).replace('\n', ' ').replace('\r', ' ').strip()
+                                if col_clean == clean_field:
+                                    value = matched_row[col]
+                                    if pd.notna(value) and str(value).strip() != "":
+                                        found_value = value
+                                        found = True
+                                        print(f"✅ Bereinigte Übereinstimmung: {col} → {field} = {value}")
+                                        break
+
+                        # 3. CASE-INSENSITIVE ÜBEREINSTIMMUNG
+                        if not found:
                             for col in df.columns:
                                 col_clean = str(col).replace('\n', ' ').replace('\r', ' ').strip()
                                 if col_clean.lower() == clean_field.lower():
                                     value = matched_row[col]
                                     if pd.notna(value) and str(value).strip() != "":
-                                        str_value = str(value).strip().upper()
+                                        found_value = value
+                                        found = True
+                                        print(f"✅ Case-insensitive Übereinstimmung: {col} → {field} = {value}")
+                                        break
 
-                                        # Prüfe auf Fehlermeldungen
-                                        error_messages = [
-                                            "THE RECORD COULD NOT BE FOUND",
-                                            "ERROR CODE: 0",
-                                            "NO DATA AVAILABLE",
-                                            "DATA NOT AVAILABLE",
-                                            "N/A",
-                                            "#N/A",
-                                            "#ERROR",
-                                            "NULL"
-                                        ]
+                        # 4. TEILSTRING-SUCHE nur für spezielle Fälle (niedrigste Priorität)
+                        if not found and len(clean_field) > 4:  # Nur für längere Feldnamen
+                            for col in df.columns:
+                                col_clean = str(col).replace('\n', ' ').replace('\r', ' ').strip()
+                                # Beide Richtungen prüfen: Feldname in Spalte oder Spalte in Feldname
+                                if (clean_field.lower() in col_clean.lower() or col_clean.lower() in clean_field.lower()) and len(col_clean) > 3:
+                                    value = matched_row[col]
+                                    if pd.notna(value) and str(value).strip() != "":
+                                        found_value = value
+                                        found = True
+                                        print(f"✅ Teilstring-Übereinstimmung: {col} → {field} = {value}")
+                                        break
 
-                                        # Wenn eine Fehlermeldung enthalten ist, setze leeren Wert
-                                        is_error_message = any(error_msg in str_value for error_msg in error_messages)
+                        # Verarbeite gefundenen Wert
+                        if found and found_value is not None:
+                            str_value = str(found_value).strip().upper()
 
-                                        if is_error_message:
-                                            print(f"⚠️ Fehlermeldung '{value}' erkannt, setze leeren Wert")
-                                            result[field] = ""  # Leerer String
-                                            break
+                            # Prüfe auf Fehlermeldungen ZUERST
+                            error_messages = [
+                                "THE RECORD COULD NOT BE FOUND",
+                                "ERROR CODE: 0",
+                                "NO DATA AVAILABLE",
+                                "DATA NOT AVAILABLE",
+                                "N/A",
+                                "#N/A",
+                                "#ERROR",
+                                "NULL"
+                            ]
 
-                                        # RIC-Überprüfung (für echte RIC-Codes)
-                                        is_ric_like = (
-                                            str_value == ric.upper().strip() or
-                                            bool(re.match(r'^[A-Z]{1,6}\.[A-Z]{1,3}$', str_value)) or
-                                            (bool(re.match(r'^[A-Z]{1,6}$', str_value)) and len(str_value) <= 6)
-                                        )
+                            # Wenn eine Fehlermeldung enthalten ist, setze leeren Wert
+                            is_error_message = any(error_msg in str_value for error_msg in error_messages)
 
-                                        if not is_ric_like:
-                                            result[field] = value
-                                            print(f"✅ Gefunden (ähnlich): {col} = {value}")
-                                            break
-                                        else:
-                                            print(f"⚠️ Wert '{value}' sieht wie ein RIC aus, überspringe")
+                            if is_error_message:
+                                print(f"⚠️ Fehlermeldung '{found_value}' erkannt, setze leeren Wert")
+                                result[field] = ""  # Leerer String
+                                continue
+
+                            # Prüfe ob der Wert wie ein RIC aussieht (nur für echte RIC-Codes)
+                            is_ric_like = (
+                                # Exakter Match mit dem gesuchten RIC
+                                str_value == ric.upper().strip() or
+                                # Andere typische RIC-Muster (Buchstaben + Punkt + Buchstabe)
+                                bool(re.match(r'^[A-Z]{1,6}\.[A-Z]{1,3}$', str_value)) or
+                                # Nur Buchstaben ohne Punkt (wie "APD", "CLN")
+                                (bool(re.match(r'^[A-Z]{1,6}$', str_value)) and len(str_value) <= 6)
+                            )
+
+                            if not is_ric_like:
+                                result[field] = found_value
+                            else:
+                                print(f"⚠️ Wert '{found_value}' sieht wie ein RIC aus, überspringe")
+
                     # Wenn Kennzahlen gefunden wurden, breche Sheet-Schleife ab
                     if result:
                         break
@@ -281,6 +274,12 @@ def fetch_excel_kennzahlen_by_ric_filtered(ric: str, fields: list, gics_sectors=
             # Debug: Zeige welche Datei Probleme macht
             print(f"❌ Fehler in {file_path}: {e}")
             continue
+
+    # KORRIGIERT: Für nicht gefundene Felder explizit leeren Wert setzen
+    for field in fields:
+        if field not in result:
+            print(f"⚠️ Kennzahl '{field}' nicht gefunden für RIC {ric}")
+            result[field] = ""  # Leerer String statt None
 
     return result
 
@@ -513,88 +512,29 @@ def fetch_excel_kennzahlen_by_ric(ric: str, fields: list) -> dict:
 
 def fetch_excel_kennzahlen_batch(rics, excel_fields, gics_sectors=None):
     """
-    OPTIMIERTE BATCH-FUNKTION: Hole Excel-Kennzahlen für mehrere RICs in einem Durchgang
+    KORRIGIERTE BATCH-FUNKTION: Verwendet die gleiche robuste Suchlogik wie die Einzelsuche
     """
     print(f"📊 BATCH-VERARBEITUNG: {len(rics)} RICs für {len(excel_fields)} Excel-Kennzahlen")
-
-    # Verwende den Sector-Filter für Datei-Auswahl
-    if gics_sectors:
-        gics_sectors_tuple = tuple(gics_sectors)
-        file_paths = get_sector_excel_files(gics_sectors_tuple)
-    else:
-        file_paths = get_sector_excel_files(None)
-
-    # Lade alle relevanten Excel-Dateien einmalig in den Cache
-    load_excel_files_once(file_paths)
 
     # Sammle alle Ergebnisse
     all_results = {}
 
-    # Verarbeite alle RICs in einem Durchgang
+    # Verwende die bewährte Einzelsuche für jeden RIC
     for ric in rics:
-        ric_results = {}
+        try:
+            ric_results = fetch_excel_kennzahlen_by_ric_filtered(ric, excel_fields, gics_sectors)
+            all_results[ric] = ric_results
 
-        # Durchsuche alle gecachten Dateien
-        for file_path in file_paths:
-            if file_path not in _excel_cache:
-                continue
+            if ric_results:
+                found_count = len([v for v in ric_results.values() if v != ""])
+                print(f"     ✅ {ric}: {found_count}/{len(excel_fields)} Kennzahlen gefunden")
+            else:
+                print(f"     ❌ {ric}: Keine Kennzahlen gefunden")
 
-            file_cache = _excel_cache[file_path]
+        except Exception as e:
+            print(f"     ❌ {ric}: Fehler bei der Suche - {e}")
+            all_results[ric] = {}
 
-            for sheet_name, df_raw in file_cache.items():
-                # Überspringe irrelevante Sheets
-                if not any(pattern in sheet_name.lower() for pattern in ["equity", "key", "revenue", "profitability", "financial", "growth", "figures"]):
-                    continue
-
-                try:
-                    # Finde RIC in der Datei (ohne erneutes Laden)
-                    if len(df_raw.columns) < 5:
-                        continue
-
-                    # Suche nach dem RIC in Spalte E (Index 4)
-                    ric_column_data = df_raw.iloc[:, 4].astype(str).str.upper().str.strip()
-                    matching_rows = ric_column_data == ric.upper().strip()
-
-                    if not matching_rows.any():
-                        continue
-
-                    # RIC gefunden - hole Kennzahlen
-                    for field in excel_fields:
-                        if field in ric_results:
-                            continue  # Bereits gefunden
-
-                        # Suche Header in verschiedenen Zeilen
-                        for header_row in [2, 3]:  # Zeile 3 und 4 (0-basiert: 2 und 3)
-                            if header_row >= len(df_raw):
-                                continue
-
-                            headers = df_raw.iloc[header_row].astype(str).str.strip()
-
-                            # Exakte Übereinstimmung
-                            if field in headers.values:
-                                col_idx = headers[headers == field].index[0]
-
-                                # Hole Wert aus der entsprechenden Zeile
-                                matching_row_idx = matching_rows[matching_rows].index[0]
-
-                                if matching_row_idx < len(df_raw):
-                                    value = df_raw.iloc[matching_row_idx, col_idx]
-
-                                    if pd.notna(value) and str(value).strip() not in ['', 'nan', 'None']:
-                                        ric_results[field] = value
-                                        break
-
-                        if field in ric_results:
-                            break  # Kennzahl gefunden, nächste Kennzahl
-
-                except Exception as e:
-                    continue
-
-        all_results[ric] = ric_results
-        if ric_results:
-            print(f"     ✅ {ric}: {len(ric_results)}/{len(excel_fields)} Kennzahlen gefunden")
-        else:
-            print(f"     ❌ {ric}: Keine Kennzahlen gefunden")
-
-    print(f"📊 BATCH-ERGEBNIS: {len([r for r in all_results.values() if r])} von {len(rics)} RICs mit Daten")
+    successful_results = len([r for r in all_results.values() if any(v != "" for v in r.values())])
+    print(f"📊 BATCH-ERGEBNIS: {successful_results} von {len(rics)} RICs mit Daten")
     return all_results
